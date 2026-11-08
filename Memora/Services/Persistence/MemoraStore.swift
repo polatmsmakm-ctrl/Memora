@@ -29,10 +29,40 @@ final class MemoraStore: ObservableObject {
             DatabaseIO.quarantine(fileURL)
             loadError = error.localizedDescription
         }
+        loaded.guidance = GuidanceMirror.standard.reconcile(loaded.guidance)
+        GuidanceMirror.standard.save(loaded.guidance)
         self.db = loaded
         self.settings = loaded.settings
         self.lastError = loadError
         Localizer.language = loaded.settings.language
+    }
+
+    // MARK: Guidance (onboarding)
+
+    var guidance: GuidanceState { db.guidance }
+
+    /// Records that the tour was finished or skipped. Saved immediately so it survives
+    /// a crash or force-quit right after the tour.
+    func markTourFinished(skipped: Bool) {
+        db.guidance.tourCompleted = true
+        db.guidance.tourSkipped = db.guidance.tourSkipped || skipped
+        if db.guidance.tourCompletedAt == nil { db.guidance.tourCompletedAt = Date() }
+        GuidanceMirror.standard.save(db.guidance)
+        saveNow()
+    }
+
+    func markTipSeen(_ id: String) {
+        guard !db.guidance.seenTips.contains(id) else { return }
+        db.guidance.seenTips.append(id)
+        GuidanceMirror.standard.save(db.guidance)
+        scheduleSave()
+    }
+
+    /// Lets every one-time feature tip appear again (Help → Show tips again).
+    func resetFeatureTips() {
+        db.guidance.seenTips = []
+        GuidanceMirror.standard.save(db.guidance)
+        saveNow()
     }
 
     var scheduler: FSRSScheduler { FSRSScheduler(parameters: settings.fsrs) }
@@ -292,6 +322,7 @@ final class MemoraStore: ObservableObject {
     func replaceDatabase(with newDB: AppDatabase) {
         var copy = newDB
         copy.settings = settings
+        copy.guidance = GuidanceState.merged(db.guidance, newDB.guidance)
         db = copy
         db.lastModified = Date()
         saveNow()
@@ -308,6 +339,7 @@ final class MemoraStore: ObservableObject {
         for item in db.items { if let name = item.imageFileName { ImageStore.delete(name) } }
         var fresh = AppDatabase()
         fresh.settings = settings
+        fresh.guidance = db.guidance
         db = fresh
         saveNow()
     }

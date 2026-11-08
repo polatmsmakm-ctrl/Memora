@@ -99,6 +99,7 @@ struct StudySessionView: View {
                     .padding(14)
                     .background(vm.showConfidenceRequired && vm.confidence == nil ? Theme.warning.opacity(0.12) : Color.clear,
                                 in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .featureTip(.studyConfidence, arrowEdge: .bottom)
             }
 
             if vm.phase == .evaluating {

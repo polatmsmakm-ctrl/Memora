@@ -67,6 +67,7 @@ struct CoachView: View {
                 Text(L("coach.explain")).tag(false)
             }
             .pickerStyle(.segmented)
+            .featureTip(.coachModes, isActive: router.selectedTab == .coach)
             Picker(L("common.subject"), selection: $subjectID) {
                 Text(L("common.allSubjects")).tag(UUID?.none)
                 ForEach(store.db.subjects) { Text($0.name).tag(Optional($0.id)) }

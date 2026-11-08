@@ -36,7 +36,8 @@ final class PersistenceTests: XCTestCase {
         let v1Data = try JSONSerialization.data(withJSONObject: json)
 
         let migrated = try DatabaseIO.decode(v1Data)
-        XCTAssertEqual(migrated.schemaVersion, 2)
+        XCTAssertEqual(migrated.schemaVersion, AppDatabase.currentSchemaVersion)
+        XCTAssertFalse(migrated.guidance.tourCompleted)
         XCTAssertEqual(migrated.items.count, 1)
         XCTAssertTrue(migrated.items[0].promptVariants.isEmpty)
         XCTAssertTrue(migrated.palaces.isEmpty)

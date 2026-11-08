@@ -296,6 +296,7 @@ struct FeedbackPanel: View {
                         }
                         if vm.showsRatingControls {
                             RatingSelector(selection: $vm.chosenRating, suggested: vm.suggestedRating, preview: vm.ratingPreview)
+                                .featureTip(.ratingSelector, arrowEdge: .bottom)
                         }
                     }
                 }

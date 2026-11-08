@@ -3,13 +3,16 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var store: MemoraStore
     @ObservedObject private var reminders = ReminderService.shared
+    @ObservedObject private var guide = GuideCenter.shared
     @State private var weightsText = ""
     @State private var weightsError: String?
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
             Form {
                 generalSection
+                helpSection
                 learningSection
                 remindersSection
                 sleepSection
@@ -31,9 +34,29 @@ struct SettingsView: View {
                 }
             }
             .memoraScreen()
+            .onChange(of: guide.scrollRequest) { _, target in
+                guard target == .settingsReminders else { return }
+                withAnimation(.easeInOut(duration: 0.35)) {
+                    proxy.scrollTo(GuideAnchorID.settingsReminders.rawValue, anchor: .center)
+                }
+            }
+            }
             .navigationTitle(L("tab.settings"))
             .keyboardDoneButton()
             .onAppear { weightsText = store.settings.fsrs.weightsText }
+        }
+    }
+
+    private var helpSection: some View {
+        Section(L("settings.help")) {
+            Button {
+                guide.replay()
+            } label: {
+                Label(L("help.replay"), systemImage: "play.circle")
+            }
+            NavigationLink { HelpCenterView() } label: {
+                Label(L("help.center"), systemImage: "questionmark.circle")
+            }
         }
     }
 
@@ -101,6 +124,8 @@ struct SettingsView: View {
     private var remindersSection: some View {
         Section {
             Toggle(L("settings.reminders.enabled"), isOn: $store.settings.reminders.enabled)
+                .guideAnchor(.settingsReminders)
+                .id(GuideAnchorID.settingsReminders.rawValue)
             if reminders.authorization == .denied {
                 Text(L("settings.reminders.denied")).font(.caption).foregroundStyle(Theme.warning)
             } else if reminders.authorization == .notDetermined && store.settings.reminders.enabled {

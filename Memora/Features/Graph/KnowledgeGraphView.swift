@@ -61,6 +61,7 @@ struct KnowledgeGraphView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 } else {
                     legend
+                        .featureTip(.knowledgeGraph, arrowEdge: .bottom)
                 }
             }
         }

@@ -11,6 +11,7 @@ struct ExperimentsView: View {
         List {
             Section {
                 Text(L("experiments.explain")).font(.footnote).foregroundStyle(.secondary)
+                    .featureTip(.experiments)
             }
             if store.db.experiments.isEmpty {
                 Section {

@@ -79,6 +79,7 @@ enum BackupService {
         }
         result.palaces = union(local.palaces, incoming.palaces)
         result.pretests = union(local.pretests, incoming.pretests)
+        result.guidance = GuidanceState.merged(local.guidance, incoming.guidance)
         result.schemaVersion = AppDatabase.currentSchemaVersion
         return result
     }

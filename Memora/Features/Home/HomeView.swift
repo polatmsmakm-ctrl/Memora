@@ -14,8 +14,10 @@ struct HomeView: View {
                             EmptyStateView(systemImage: "square.and.arrow.down", title: L("home.empty.title"), message: L("home.empty.message"),
                                            actionTitle: L("home.empty.action")) { router.openImport() }
                         }
+                        .guideAnchor(.homeSummary)
                     } else {
                         todayCard
+                            .guideAnchor(.homeSummary)
                         statesCard
                         rescueCard
                         diagnosisCard
@@ -29,12 +31,7 @@ struct HomeView: View {
             }
             .memoraScreen()
             .navigationTitle(L("tab.home"))
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button { router.openImport() } label: { Image(systemName: "plus") }
-                        .accessibilityLabel(L("library.import"))
-                }
-            }
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 
@@ -46,11 +43,24 @@ struct HomeView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(greeting).font(.memoraLargeTitle)
-            Text(L("home.subtitle")).font(.subheadline).foregroundStyle(.secondary)
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(greeting).font(.memoraLargeTitle)
+                Text(L("home.subtitle")).font(.subheadline).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button { router.openImport() } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 48, height: 48)
+                    .background(Theme.accent, in: Circle())
+                    .shadow(color: Theme.accent.opacity(0.35), radius: 10, y: 4)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L("library.import"))
+            .guideAnchor(.addMaterial)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var greeting: String {

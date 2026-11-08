@@ -36,13 +36,22 @@ struct RootView: View {
         } message: {
             Text(store.lastError ?? "")
         }
+        .overlay { GuideOverlay() }
+        .task {
+            GuideCenter.shared.attach(store: store, router: router)
+            // Let the first layout settle so tour targets are on screen.
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            GuideCenter.shared.startIfNeeded()
+        }
     }
 
     private var splitLayout: some View {
         NavigationSplitView {
             List(selection: Binding<AppTab?>(get: { router.selectedTab }, set: { if let tab = $0 { router.selectedTab = tab } })) {
                 ForEach(AppTab.allCases) { tab in
-                    Label(tab.title, systemImage: tab.icon).tag(tab)
+                    Label(tab.title, systemImage: tab.icon)
+                        .guideAnchor(GuideAnchorID.tab(tab))
+                        .tag(tab)
                 }
             }
             .navigationTitle("Memora")
@@ -109,6 +118,7 @@ struct CompactTabBar: View {
                     .padding(.vertical, 7)
                     .foregroundStyle(selection == tab ? Theme.accent : Color.secondary)
                     .contentShape(Rectangle())
+                    .guideAnchor(GuideAnchorID.tab(tab))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(tab.title)

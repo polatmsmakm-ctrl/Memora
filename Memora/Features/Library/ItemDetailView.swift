@@ -114,6 +114,7 @@ struct ItemDetailView: View {
                 StatTile(title: L("item.nextReview"), value: item.isIntroduced ? Formatters.relative(item.card.due) : "—",
                          systemImage: "calendar")
             }
+            .featureTip(.memoryProfile)
             row(L("item.desiredRetention"), Formatters.percent(store.settings.fsrs.desiredRetention))
             row(L("item.created"), Formatters.date(item.createdAt))
             row(L("item.firstLearned"), item.introducedAt.map { Formatters.date($0) } ?? "—")

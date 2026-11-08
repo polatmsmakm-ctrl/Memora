@@ -12,6 +12,7 @@ struct ImportReviewView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(LF("import.review.header", vm.units.count, vm.includedCount)).font(.headline)
                     Text(L("import.review.body")).font(.caption).foregroundStyle(.secondary)
+                        .featureTip(.importReview)
                     if let notice = vm.notice {
                         Label(notice, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(Theme.warning)
                     }

@@ -18,6 +18,7 @@ struct PriorKnowledgeView: View {
         List {
             Section {
                 Text(L("prior.explain")).font(.footnote).foregroundStyle(.secondary)
+                    .featureTip(.priorKnowledge)
                 summaryRow
             }
             ForEach(items) { item in

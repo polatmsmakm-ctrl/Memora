@@ -68,6 +68,7 @@ struct BlindRecallView: View {
                 }
             }
             AnswerEditor(text: $text, placeholder: L("blind.placeholder"), minHeight: 260)
+                .featureTip(.blindRecall)
             ConfidencePicker(selection: $confidence)
             Button(L("blind.check")) { evaluate() }
                 .buttonStyle(PrimaryButtonStyle(fullWidth: true))

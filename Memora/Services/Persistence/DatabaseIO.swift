@@ -18,6 +18,7 @@ enum DatabaseError: LocalizedError {
 ///  - v1: initial schema.
 ///  - v2: items gained `promptVariants` and `transferProblems`; database gained `palaces`
 ///        and `pretests`.
+///  - v3: database gained `guidance` (onboarding tour + one-time feature tips).
 enum DatabaseMigrator {
     static func migrate(_ json: [String: Any]) throws -> [String: Any] {
         var db = json
@@ -28,6 +29,7 @@ enum DatabaseMigrator {
         while version < AppDatabase.currentSchemaVersion {
             switch version {
             case 1: db = migrate1to2(db)
+            case 2: db = migrate2to3(db)
             default: break
             }
             version += 1
@@ -50,6 +52,12 @@ enum DatabaseMigrator {
         }
         if db["settings"] == nil { db["settings"] = [String: Any]() }
         if db["lastModified"] == nil { db["lastModified"] = Date().timeIntervalSince1970 }
+        return db
+    }
+
+    static func migrate2to3(_ json: [String: Any]) -> [String: Any] {
+        var db = json
+        if db["guidance"] == nil { db["guidance"] = [String: Any]() }
         return db
     }
 }

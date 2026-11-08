@@ -149,6 +149,19 @@ xcodebuild test -project Memora.xcodeproj -scheme Memora -destination 'platform=
 - **Navigation.** iPhone: custom 7-item bottom bar; iPad: `NavigationSplitView` sidebar.
 - **Deep links.** `memora://review`, `memora://learn`, `memora://import`, `memora://analytics` (widget uses review).
 
+## 6b. First-time guidance
+
+- `Features/Guidance/`: `GuideCenter` (coordinator), `GuideOverlay` (dim + animated spotlight + tooltip bubble
+  with arrow, progress "Step n of 8", Next/Back/Skip), `GuideAnchor` (`.guideAnchor(id)` and `.featureTip(tip)`),
+  `GuideModels` (stable anchor IDs, 8 tour steps, 10 feature tips), `HelpCenterView`.
+- Targets are measured by an invisible UIKit probe (`GuideProbeView`) in window coordinates, re-measured 4×/s
+  during the tour, so the spotlight follows the real control on any screen size, orientation, scroll position and
+  in both RTL and LTR. Steps switch tabs and scroll Settings to the reminders row automatically.
+- State: `AppDatabase.guidance` (schema v3, migration 2→3) mirrored in UserDefaults. Completing or skipping saves
+  immediately; a quarantined database, app restart or update never re-shows the tour. Erase, restore and merge keep
+  the completion. Each tip is tracked by its own ID and shown with a native popover only once, never during the tour.
+- Settings → Help: "Replay App Tutorial" (does not touch data), all explanations, "Show feature tips again".
+
 ## 7. Known limitations
 
 - Not compiled or executed by the author; expect possible minor compile fixes on first CI run.

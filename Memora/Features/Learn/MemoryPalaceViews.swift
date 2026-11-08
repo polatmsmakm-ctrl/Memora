@@ -11,6 +11,7 @@ struct MemoryPalaceListView: View {
         List {
             Section {
                 Text(L("palace.explain")).font(.footnote).foregroundStyle(.secondary)
+                    .featureTip(.memoryPalace)
             }
             if store.db.palaces.isEmpty {
                 Section {
