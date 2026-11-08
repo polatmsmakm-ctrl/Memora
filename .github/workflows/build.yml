@@ -1,0 +1,125 @@
+name: Build Memora IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select newest stable Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode*.app | grep -vi beta | sort -V | tail -n 1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate app icon
+        run: swift Tools/GenerateIcon.swift Memora/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+
+      - name: Inject optional build secrets
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -n "$GEMINI_API_KEY" ]; then
+            printf 'enum BuildSecrets {\n    static let geminiDefaultKey = "%s"\n}\n' "$GEMINI_API_KEY" > Memora/Config/BuildSecrets.swift
+            echo "Default Gemini key injected."
+          else
+            echo "No GEMINI_API_KEY secret; users add their own key in Settings."
+          fi
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Archive (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project Memora.xcodeproj \
+            -scheme Memora \
+            -sdk iphoneos \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Memora.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | tee build-log.txt | grep -E "error:|warning: unused|BUILD|ARCHIVE" || true
+          test -d build/Memora.xcarchive/Products/Applications/Memora.app
+
+      - name: Package IPA
+        run: |
+          mkdir -p build/Payload
+          cp -R build/Memora.xcarchive/Products/Applications/Memora.app build/Payload/
+          ls build/Payload/Memora.app/PlugIns || echo "No PlugIns folder"
+          cd build
+          zip -qry Memora.ipa Payload
+          ls -lh Memora.ipa
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build-log.txt
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Memora-IPA
+          path: build/Memora.ipa
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Memora build ${{ github.run_number }}
+          files: build/Memora.ipa
+          body: |
+            Unsigned IPA. Install with Sideloadly using your Apple Developer account.
+
+  test:
+    name: Unit tests (simulator)
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select newest stable Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode*.app | grep -vi beta | sort -V | tail -n 1)
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate icon and project
+        run: |
+          swift Tools/GenerateIcon.swift Memora/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+          xcodegen generate
+
+      - name: Run tests
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(dev['udid'] for rt,devs in d.items() if 'iOS' in rt for dev in devs if dev['name'].startswith('iPhone')))")
+          echo "Simulator: $UDID"
+          set -o pipefail
+          xcodebuild test \
+            -project Memora.xcodeproj \
+            -scheme Memora \
+            -destination "id=$UDID" \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee test-log.txt | grep -E "Test Case|error:|TEST (SUCCEEDED|FAILED)|Executed" || true
+          grep -q "TEST SUCCEEDED" test-log.txt

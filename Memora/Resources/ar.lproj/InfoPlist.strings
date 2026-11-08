@@ -1,0 +1,5 @@
+"CFBundleDisplayName" = "Memora";
+"NSCameraUsageDescription" = "تستخدم ميمورا الكاميرا لمسح صفحات الملاحظات والكتب وتحويلها إلى نص للتعلم.";
+"NSPhotoLibraryUsageDescription" = "تستخدم ميمورا الصور التي تختارها لاستخراج النص وإرفاق الصور بعناصر التعلم.";
+"NSMicrophoneUsageDescription" = "تستخدم ميمورا الميكروفون لتسجيل ملاحظاتك الصوتية وتحويلها إلى نص.";
+"NSSpeechRecognitionUsageDescription" = "تستخدم ميمورا التعرف على الكلام لتحويل تسجيلاتك الصوتية إلى نص قابل للتعلم.";
