@@ -8,7 +8,6 @@ struct ImportView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var vm: ImportViewModel
 
-    @State private var showFiles = false
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var loadingPhotos = false
     @State private var showScanner = false
@@ -52,14 +51,6 @@ struct ImportView: View {
             .alert(L("common.error"), isPresented: Binding(get: { vm.errorMessage != nil }, set: { if !$0 { vm.errorMessage = nil } })) {
                 Button(L("common.ok"), role: .cancel) {}
             } message: { Text(vm.errorMessage ?? "") }
-            .fileImporter(isPresented: $showFiles, allowedContentTypes: DocumentImporter.importableTypes, allowsMultipleSelection: false) { result in
-                switch result {
-                case .success(let urls):
-                    if let url = urls.first { vm.importFile(url, language: store.settings.language) }
-                case .failure(let error):
-                    vm.errorMessage = error.localizedDescription
-                }
-            }
             .onChange(of: photoItems) { _, items in
                 guard !items.isEmpty else { return }
                 loadPhotos(items)
@@ -87,6 +78,16 @@ struct ImportView: View {
             .onChange(of: router.pendingImportURL) { _, _ in consumePendingFile() }
         }
         .interactiveDismissDisabled(vm.isBusy || vm.stage == .approve)
+    }
+
+    /// Opens the Files picker. Every file is selectable; the importer reports unsupported types.
+    private func pickFile() {
+        UIApplication.shared.dismissKeyboard()
+        DocumentPicker.present { urls in
+            guard let url = urls.first else { return }
+            textMode = false
+            vm.importFile(url, language: store.settings.language)
+        }
     }
 
     /// Imports a file that was shared to the app ("Open in Memora").
@@ -182,7 +183,7 @@ struct ImportView: View {
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
                         sourceTile(L("import.src.text"), "text.alignleft") { textMode = true }
-                        sourceTile(L("import.src.files"), "doc.richtext") { showFiles = true }
+                        sourceTile(L("import.src.files"), "doc.richtext") { pickFile() }
                         PhotosPicker(selection: $photoItems, maxSelectionCount: 10, matching: .images) {
                             tileLabel(L("import.src.photos"), "photo.on.rectangle")
                         }

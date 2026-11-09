@@ -57,6 +57,27 @@ enum DocumentImporter {
             let text = try readText(url)
             return fromText(text, title: title, kind: .text, fileName: fileName)
         }
+        // Unknown or missing extension (every file is selectable in the picker): sniff the
+        // content so a PDF/DOCX/text file saved with an odd name still imports.
+        if let data = try? Data(contentsOf: url, options: .mappedIfSafe) {
+            let head = [UInt8](data.prefix(4))
+            if head.starts(with: [0x25, 0x50, 0x44, 0x46]) { // %PDF
+                var doc = try await PDFTextExtractor.extract(url: url, fallbackTitle: title, progress: progress)
+                doc.originalFileName = fileName
+                return doc
+            }
+            if head.starts(with: [0x50, 0x4B, 0x03, 0x04]), var doc = try? DOCXTextExtractor.extract(url: url) { // ZIP
+                doc.title = title
+                doc.originalFileName = fileName
+                return doc
+            }
+            if let image = UIImage(data: data) {
+                return try await fromImages([image], title: title, attachFirst: data, progress: progress)
+            }
+            if !data.prefix(4096).contains(0), let text = decodeText(data), !TextNormalizer.isBlank(text) {
+                return fromText(text, title: title, kind: .text, fileName: fileName)
+            }
+        }
         throw ImportError.unsupported
     }
 

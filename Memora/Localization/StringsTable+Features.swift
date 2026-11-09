@@ -189,7 +189,7 @@ extension StringsTable {
         "import.done.learn": ("ابدأ التعلم", "Start learning"),
         "import.another": ("استيراد آخر", "Import another"),
         "import.error.unreadable": ("تعذّرت قراءة الملف.", "The file could not be read."),
-        "import.error.unsupported": ("نوع الملف غير مدعوم.", "Unsupported file type."),
+        "import.error.unsupported": ("نوع الملف غير مدعوم. الصيغ المدعومة: PDF، DOCX، TXT، RTF، الصور، الصوت.", "Unsupported file type. Supported: PDF, DOCX, TXT, RTF, images, audio."),
         "import.error.empty": ("لم يُعثر على نص.", "No text was found."),
         "import.error.noUnits": ("لم تُستخرج وحدات تعلم. جرّب نصاً أطول أو فعّل الذكاء الاصطناعي.", "No learning units found. Try longer text or enable AI."),
         "import.error.speechUnavailable": ("التعرف على الكلام غير متاح لهذه اللغة الآن.", "Speech recognition isn't available for this language right now."),

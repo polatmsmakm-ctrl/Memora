@@ -7,7 +7,6 @@ struct BackupView: View {
     @EnvironmentObject private var store: MemoraStore
     @State private var exportDocument: BackupDocument?
     @State private var showExporter = false
-    @State private var showImporter = false
     @State private var pendingBackup: BackupFile?
     @State private var status: String?
     @State private var confirmErase = false
@@ -35,7 +34,7 @@ struct BackupView: View {
                 } label: { Label(L("backup.export.action"), systemImage: "square.and.arrow.up") }
             }
             Section(L("backup.import")) {
-                Button { showImporter = true } label: { Label(L("backup.import.action"), systemImage: "square.and.arrow.down") }
+                Button { pickBackup() } label: { Label(L("backup.import.action"), systemImage: "square.and.arrow.down") }
                 Text(L("backup.import.note")).font(.caption).foregroundStyle(.secondary)
             }
             if let status {
@@ -52,19 +51,6 @@ struct BackupView: View {
             switch result {
             case .success: status = L("backup.exported")
             case .failure(let error): status = error.localizedDescription
-            }
-        }
-        .fileImporter(isPresented: $showImporter, allowedContentTypes: [.json], allowsMultipleSelection: false) { result in
-            switch result {
-            case .success(let urls):
-                guard let url = urls.first else { return }
-                do {
-                    pendingBackup = try BackupService.readBackup(from: url)
-                } catch {
-                    status = error.localizedDescription
-                }
-            case .failure(let error):
-                status = error.localizedDescription
             }
         }
         .confirmationDialog(L("backup.import.choose"), isPresented: Binding(get: { pendingBackup != nil }, set: { if !$0 { pendingBackup = nil } }),
@@ -84,6 +70,18 @@ struct BackupView: View {
             }
         } message: {
             Text(L("backup.erase.message"))
+        }
+    }
+
+    /// Opens the Files picker (UIKit) so backups are selectable whatever extension they were saved with.
+    private func pickBackup() {
+        DocumentPicker.present { urls in
+            guard let url = urls.first else { return }
+            do {
+                pendingBackup = try BackupService.readBackup(from: url)
+            } catch {
+                status = error.localizedDescription
+            }
         }
     }
 
