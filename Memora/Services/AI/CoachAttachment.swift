@@ -17,6 +17,20 @@ struct CoachAttachment: Identifiable {
 
     var title: String { (fileName as NSString).deletingPathExtension }
 
+    /// Photos or scanned pages, sent to Gemini as JPEGs (it reads printed and handwritten text).
+    static func fromImages(_ images: [UIImage], name: String) throws -> CoachAttachment {
+        var parts: [AIAttachment] = []
+        var total = 0
+        for image in images.prefix(10) {
+            guard let jpeg = downscaled(image, maxSide: 2000).jpegData(compressionQuality: 0.8) else { continue }
+            total += jpeg.count
+            guard total <= maxInlineBytes else { break }
+            parts.append(AIAttachment(mimeType: "image/jpeg", data: jpeg))
+        }
+        guard !parts.isEmpty else { throw ImportError.unreadable }
+        return CoachAttachment(fileName: name, systemImage: "photo", inlineParts: parts)
+    }
+
     static func load(from url: URL, speechLocale: String) async throws -> CoachAttachment {
         let fileName = url.lastPathComponent
         let ext = url.pathExtension.lowercased()
@@ -50,7 +64,7 @@ struct CoachAttachment: Identifiable {
         return CoachAttachment(fileName: fileName, systemImage: doc.kind.systemImage, extractedText: doc.text)
     }
 
-    private static func downscaled(_ image: UIImage, maxSide: CGFloat = 2400) -> UIImage {
+    static func downscaled(_ image: UIImage, maxSide: CGFloat = 2400) -> UIImage {
         let side = max(image.size.width, image.size.height)
         guard side > maxSide else { return image }
         let scale = maxSide / side

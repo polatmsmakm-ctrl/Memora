@@ -62,7 +62,7 @@ struct AnalyticsView: View {
         }
     }
 
-    private var isVisible: Bool { router.selectedTab == .analytics }
+    private var isVisible: Bool { router.selectedTab == .analytics || router.advancedScreen == .analytics }
 
     private func recompute() {
         snapshot = AnalyticsEngine.compute(db: store.db, scheduler: store.scheduler, now: Date())

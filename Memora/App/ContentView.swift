@@ -31,6 +31,14 @@ struct RootView: View {
                 .environment(\.layoutDirection, store.settings.language.layoutDirection)
                 .preferredColorScheme(store.settings.appearance.colorScheme)
         }
+        .sheet(item: $router.advancedScreen, onDismiss: { router.advancedDidClose() }) { screen in
+            AdvancedScreenView(screen: screen)
+                .environmentObject(store)
+                .environmentObject(router)
+                .environment(\.layoutDirection, store.settings.language.layoutDirection)
+                .environment(\.locale, store.settings.language.locale)
+                .preferredColorScheme(store.settings.appearance.colorScheme)
+        }
         .alert(L("common.error"), isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.lastError = nil } })) {
             Button(L("common.ok"), role: .cancel) { store.lastError = nil }
         } message: {
@@ -38,17 +46,16 @@ struct RootView: View {
         }
         .overlay { GuideOverlay() }
         .task {
+            // The guided tour described the old seven-tab layout, so it no longer starts
+            // on its own; the simple layout explains itself.
             GuideCenter.shared.attach(store: store, router: router)
-            // Let the first layout settle so tour targets are on screen.
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            GuideCenter.shared.startIfNeeded()
         }
     }
 
     private var splitLayout: some View {
         NavigationSplitView {
             List(selection: Binding<AppTab?>(get: { router.selectedTab }, set: { if let tab = $0 { router.selectedTab = tab } })) {
-                ForEach(AppTab.allCases) { tab in
+                ForEach(AppTab.visibleTabs) { tab in
                     Label(tab.title, systemImage: tab.icon)
                         .guideAnchor(GuideAnchorID.tab(tab))
                         .tag(tab)
@@ -66,7 +73,7 @@ struct RootView: View {
     private var compactLayout: some View {
         VStack(spacing: 0) {
             ZStack {
-                ForEach(AppTab.allCases) { tab in
+                ForEach(AppTab.visibleTabs) { tab in
                     tabRoot(tab)
                         .opacity(router.selectedTab == tab ? 1 : 0)
                         .allowsHitTesting(router.selectedTab == tab)
@@ -84,9 +91,10 @@ struct RootView: View {
     @ViewBuilder
     private func tabRoot(_ tab: AppTab) -> some View {
         switch tab {
+        case .add: AddView()
         case .home: HomeView()
         case .learn: LearnHubView()
-        case .review: ReviewHubView()
+        case .review: TodayReviewView()
         case .library: LibraryView()
         case .analytics: AnalyticsView()
         case .coach: CoachView()
@@ -100,7 +108,7 @@ struct CompactTabBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(AppTab.allCases) { tab in
+            ForEach(AppTab.visibleTabs) { tab in
                 Button {
                     if selection != tab { Haptics.selection() }
                     selection = tab
@@ -129,5 +137,40 @@ struct CompactTabBar: View {
         .padding(.top, 4)
         .background(.ultraThinMaterial)
         .overlay(alignment: .top) { Divider().opacity(0.5) }
+    }
+}
+
+/// One of the full app's extra screens, opened from Settings › Advanced tools.
+struct AdvancedScreenView: View {
+    var screen: AdvancedScreen
+    @EnvironmentObject private var router: AppRouter
+
+    var body: some View {
+        content
+            .overlay(alignment: .bottom) {
+                Button {
+                    router.advancedScreen = nil
+                } label: {
+                    Label(L("common.close"), systemImage: "xmark")
+                        .font(.footnote.weight(.semibold))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 9)
+                        .background(.ultraThinMaterial, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .padding(.bottom, screen == .coach ? 70 : 12)
+            }
+            .presentationDragIndicator(.visible)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch screen {
+        case .home: HomeView()
+        case .learn: LearnHubView()
+        case .reviewModes: ReviewHubView()
+        case .coach: CoachView()
+        case .analytics: AnalyticsView()
+        }
     }
 }

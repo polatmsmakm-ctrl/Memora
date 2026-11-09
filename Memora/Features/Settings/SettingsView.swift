@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var store: MemoraStore
+    @EnvironmentObject private var router: AppRouter
     @ObservedObject private var reminders = ReminderService.shared
     @ObservedObject private var guide = GuideCenter.shared
     @State private var weightsText = ""
@@ -11,20 +12,13 @@ struct SettingsView: View {
         NavigationStack {
             ScrollViewReader { proxy in
             Form {
+                aiSection
                 generalSection
+                remindersSection
+                advancedSection
                 helpSection
                 learningSection
-                remindersSection
                 sleepSection
-                Section(L("settings.ai")) {
-                    NavigationLink { AISettingsView() } label: {
-                        HStack {
-                            Label(L("settings.ai.configure"), systemImage: "sparkles")
-                            Spacer()
-                            Text(AIService.isAvailable ? L("settings.ai.on") : L("settings.ai.off")).foregroundStyle(.secondary)
-                        }
-                    }
-                }
                 Section(L("settings.data")) {
                     NavigationLink { BackupView() } label: { Label(L("settings.backup"), systemImage: "externaldrive") }
                 }
@@ -47,13 +41,38 @@ struct SettingsView: View {
         }
     }
 
+    private var aiSection: some View {
+        Section(L("settings.ai")) {
+            NavigationLink { AISettingsView() } label: {
+                HStack {
+                    Label(L("settings.ai.configure"), systemImage: "sparkles")
+                    Spacer()
+                    Text(AIService.isAvailable ? L("settings.ai.on") : L("settings.ai.off")).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var advancedSection: some View {
+        Section {
+            ForEach(AdvancedScreen.allCases) { screen in
+                Button { router.openAdvanced(screen) } label: { Label(screen.title, systemImage: screen.icon) }
+            }
+            Button { router.openImport() } label: { Label(L("advanced.import"), systemImage: "square.and.arrow.down") }
+            NavigationLink { KnowledgeGraphView(subjectID: nil) } label: {
+                Label(L("graph.title"), systemImage: "point.3.connected.trianglepath.dotted")
+            }
+            NavigationLink { MemoryPalaceListView() } label: { Label(L("palace.title"), systemImage: "building.columns") }
+            NavigationLink { SourcesListView() } label: { Label(L("library.sources"), systemImage: "doc.on.doc") }
+        } header: {
+            Text(L("advanced.title"))
+        } footer: {
+            Text(L("advanced.footer"))
+        }
+    }
+
     private var helpSection: some View {
         Section(L("settings.help")) {
-            Button {
-                guide.replay()
-            } label: {
-                Label(L("help.replay"), systemImage: "play.circle")
-            }
             NavigationLink { HelpCenterView() } label: {
                 Label(L("help.center"), systemImage: "questionmark.circle")
             }

@@ -11,6 +11,7 @@ enum GuideAnchorID: String, CaseIterable {
 
     static func tab(_ tab: AppTab) -> GuideAnchorID {
         switch tab {
+        case .add: return .addMaterial
         case .home: return .tabHome
         case .learn: return .tabLearn
         case .review: return .tabReview

@@ -12,7 +12,7 @@ struct LibraryView: View {
                 if store.db.subjects.isEmpty {
                     Section {
                         EmptyStateView(systemImage: "books.vertical", title: L("library.empty.title"), message: L("library.empty.message"),
-                                       actionTitle: L("library.import")) { router.openImport() }
+                                       actionTitle: L("today.empty.action")) { router.selectedTab = .add }
                     }
                     .listRowBackground(Color.clear)
                 }
@@ -31,18 +31,6 @@ struct LibraryView: View {
                     }
                     .listRowBackground(Theme.surface)
 
-                    Section(L("library.tools")) {
-                        NavigationLink { KnowledgeGraphView(subjectID: nil) } label: {
-                            Label(L("graph.title"), systemImage: "point.3.connected.trianglepath.dotted")
-                        }
-                        NavigationLink { MemoryPalaceListView() } label: {
-                            Label(L("palace.title"), systemImage: "building.columns")
-                        }
-                        NavigationLink { SourcesListView() } label: {
-                            Label(L("library.sources"), systemImage: "doc.on.doc")
-                        }
-                    }
-                    .listRowBackground(Theme.surface)
                 }
             }
             .memoraScreen()
@@ -51,7 +39,7 @@ struct LibraryView: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
-                        Button { router.openImport() } label: { Label(L("library.import"), systemImage: "square.and.arrow.down") }
+                        Button { router.selectedTab = .add } label: { Label(L("add.title"), systemImage: "plus.circle") }
                         Button { showNewSubject = true } label: { Label(L("library.newSubject"), systemImage: "folder.badge.plus") }
                     } label: {
                         Image(systemName: "plus")

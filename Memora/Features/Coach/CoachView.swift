@@ -78,7 +78,7 @@ struct CoachView: View {
                 Text(L("coach.explain")).tag(false)
             }
             .pickerStyle(.segmented)
-            .featureTip(.coachModes, isActive: router.selectedTab == .coach)
+            .featureTip(.coachModes, isActive: router.advancedScreen == .coach)
             Picker(L("common.subject"), selection: $subjectID) {
                 Text(L("common.allSubjects")).tag(UUID?.none)
                 ForEach(store.db.subjects) { Text($0.name).tag(Optional($0.id)) }
@@ -393,6 +393,7 @@ struct GeneratedCardSet {
     var remindMinute = 9 * 60
     var subjectID: UUID?
     var saved = false
+    var savedItemIDs: [UUID] = []
     var remindStatus: String?
 }
 
@@ -491,6 +492,7 @@ struct FlashcardSetCard: View {
                          createdAt: now.addingTimeInterval(Double(offset) * 0.001))
         }
         store.addItems(items)
+        cardSet.savedItemIDs = items.map(\.id)
         let remind = cardSet.remind
         let words = cardSet.cards.map { WordReminderService.Word(front: $0.front, back: $0.back) }
         let title = cardSet.title
