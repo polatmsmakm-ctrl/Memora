@@ -208,10 +208,27 @@ struct CoachView: View {
 struct MessageBubble: View {
     var message: AIMessage
 
+    /// Renders the reply's inline Markdown (bold, italics, code) safely. Using the text as a
+    /// LocalizedStringKey treated "%" as a format specifier and could garble replies.
+    static func render(_ text: String) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace,
+                                                              failurePolicy: .returnPartiallyParsedIfPossible)
+        let cleaned = text
+            .replacingOccurrences(of: "\n### ", with: "\n")
+            .replacingOccurrences(of: "\n## ", with: "\n")
+            .replacingOccurrences(of: "\n# ", with: "\n")
+            .replacingOccurrences(of: "\n* ", with: "\n• ")
+            .replacingOccurrences(of: "\n- ", with: "\n• ")
+        if let attributed = try? AttributedString(markdown: cleaned, options: options) {
+            return attributed
+        }
+        return AttributedString(text)
+    }
+
     var body: some View {
         HStack {
             if message.role == .user { Spacer(minLength: 40) }
-            Text(LocalizedStringKey(message.text))
+            Text(Self.render(message.text))
                 .font(.callout)
                 .textSelection(.enabled)
                 .padding(12)

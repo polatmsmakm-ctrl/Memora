@@ -7,6 +7,11 @@ enum StructureDetector {
         guard trimmed.count >= 2, trimmed.count <= 70 else { return false }
         if trimmed.hasPrefix("#") { return true }
         guard let last = trimmed.last, !".,;:؛،؟?!".contains(last) else { return false }
+        // Glossary / vocabulary lines ("term - meaning") are content, not headings —
+        // except numbered titles such as "Chapter 2: Cells" / "الفصل 2: الخلية".
+        if let colon = trimmed.firstIndex(of: ":"), !trimmed[..<colon].contains(where: \.isNumber) { return false }
+        if ContentAnalyzer.pairSeparators.filter({ $0 != ":" }).contains(where: { trimmed.contains($0) }) { return false }
+        if ContentAnalyzer.isListLine(trimmed) { return false }
         let words = trimmed.split(separator: " ").count
         guard words <= 9 else { return false }
         if let first = trimmed.first, first.isNumber, trimmed.contains(".") || trimmed.contains(")") {
@@ -17,8 +22,9 @@ enum StructureDetector {
         return (next?.count ?? 0) > trimmed.count * 2
     }
 
-    static func sections(from text: String, pageNumber: Int?) -> [SourceSection] {
-        let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    static func sections(from text: String, pageNumber: Int?, mergeWrappedLines: Bool = false) -> [SourceSection] {
+        var lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        if mergeWrappedLines { lines = unwrap(lines) }
         var sections: [SourceSection] = []
         var current = SourceSection(heading: nil, level: 0, text: "", pageNumber: pageNumber)
         for (index, line) in lines.enumerated() {
@@ -33,6 +39,30 @@ enum StructureDetector {
         }
         if !current.text.isEmpty || current.heading != nil { sections.append(current) }
         return sections
+    }
+
+    /// PDF text layers and OCR break sentences at the end of every printed line. Rejoin a
+    /// line with the previous one when the previous line is long and has no sentence end,
+    /// so definitions and facts are detected as whole sentences. Short lines (lists,
+    /// vocabulary, headings) are left alone. "photo-\nsynthesis" becomes "photosynthesis".
+    static func unwrap(_ lines: [String]) -> [String] {
+        var result: [String] = []
+        for line in lines {
+            guard let previous = result.last else { result.append(line); continue }
+            let terminators: Set<Character> = [".", "!", "?", "؟", ":", "؛", "…", ";"]
+            let previousEndsSentence = previous.last.map { terminators.contains($0) } ?? true
+            let startsNewBlock = ContentAnalyzer.isListLine(line) || line.hasPrefix("#")
+            if previous.count >= 35 && !previousEndsSentence && !startsNewBlock {
+                if previous.hasSuffix("-"), previous.dropLast().last?.isLetter == true, line.first?.isLowercase == true {
+                    result[result.count - 1] = String(previous.dropLast()) + line
+                } else {
+                    result[result.count - 1] = previous + " " + line
+                }
+            } else {
+                result.append(line)
+            }
+        }
+        return result
     }
 
     static func join(_ sections: [SourceSection]) -> String {
@@ -76,10 +106,11 @@ enum ContentAnalyzer {
 
             for sentence in TextNormalizer.sentences(section.text) {
                 if let definition = definition(in: sentence) {
-                    add(DraftUnit(title: definition.term, kind: .definition,
-                                  prompt: LF("analyze.definition.prompt", definition.term),
+                    let vocabulary = definition.meaning.split(separator: " ").count <= 4
+                    add(DraftUnit(title: definition.term, kind: vocabulary ? .vocabulary : .definition,
+                                  prompt: LF(vocabulary ? "analyze.vocab.prompt" : "analyze.definition.prompt", definition.term),
                                   answer: definition.meaning,
-                                  keyPoints: TextNormalizer.keyTerms(from: definition.meaning, limit: 4),
+                                  keyPoints: vocabulary ? [definition.meaning] : TextNormalizer.keyTerms(from: definition.meaning, limit: 4),
                                   explanation: "",
                                   sourceQuote: sentence,
                                   sectionHeading: section.heading, pageNumber: section.pageNumber, origin: .local))
@@ -110,19 +141,35 @@ enum ContentAnalyzer {
             }
         }
 
-        // Plain text without structure: fall back to the most informative sentences.
-        if units.isEmpty {
-            let sentences = TextNormalizer.sentences(document.text).filter { $0.count > 30 }
-            let ranked = sentences.sorted { informativeness($0) > informativeness($1) }.prefix(maxUnits)
-            for sentence in ranked {
-                let topic = TextNormalizer.keyTerms(from: sentence, limit: 3).joined(separator: " ")
-                guard !topic.isEmpty else { continue }
+        // Prose without definitions, lists or numbers used to give only one or two units.
+        // Fill the remaining slots with the most informative sentences not used yet.
+        if units.count < maxUnits {
+            let usedQuotes = Set(units.map { TextNormalizer.normalize($0.sourceQuote) })
+            var candidates: [(sentence: String, section: SourceSection?)] = []
+            for section in document.sections {
+                for sentence in TextNormalizer.sentences(section.text) where sentence.count >= 30 && sentence.count <= 320 && !isListLine(sentence) {
+                    let normalized = TextNormalizer.normalize(sentence)
+                    guard !usedQuotes.contains(where: { $0.contains(normalized) || normalized.contains($0) && !$0.isEmpty }) else { continue }
+                    candidates.append((sentence: sentence, section: Optional(section)))
+                }
+            }
+            if candidates.isEmpty {
+                candidates = TextNormalizer.sentences(document.text).filter { $0.count >= 30 }
+                    .map { (sentence: $0, section: SourceSection?.none) }
+            }
+            let scores = candidates.map { informativeness($0.sentence) }
+            let ranked = candidates.indices.sorted { scores[$0] == scores[$1] ? $0 < $1 : scores[$0] > scores[$1] }.map { candidates[$0] }
+            for candidate in ranked where units.count < maxUnits {
+                let sentence = candidate.sentence
+                guard let topic = topic(of: sentence, heading: candidate.section?.heading) else { continue }
                 add(DraftUnit(title: topic, kind: .fact,
                               prompt: LF("analyze.fact.prompt", topic),
                               answer: sentence,
                               keyPoints: TextNormalizer.keyTerms(from: sentence, limit: 4),
                               explanation: "",
                               sourceQuote: sentence,
+                              sectionHeading: candidate.section?.heading,
+                              pageNumber: candidate.section?.pageNumber,
                               origin: .local))
             }
         }
@@ -143,30 +190,44 @@ enum ContentAnalyzer {
         " هو ", " هي ", " يعرف بانه ", " تعرف بانها ", " يقصد به ", " يقصد بها ", " عبارة عن ", " هو عبارة عن "
     ]
 
+    /// Separators used in glossaries and vocabulary lists ("term - meaning", "term = meaning").
+    static let pairSeparators: [String] = [":", " - ", " – ", " — ", " = ", "\t", " ← ", " → "]
+
     static func definition(in sentence: String) -> (term: String, meaning: String)? {
-        let clean = sentence.trimmingCharacters(in: CharacterSet(charactersIn: " .؟?!؛"))
-        if let colon = clean.firstIndex(where: { $0 == ":" }) {
-            let term = clean[..<colon].trimmingCharacters(in: .whitespaces)
-            let meaning = clean[clean.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-            if isTerm(term), meaning.count >= 12 { return (term, meaning) }
+        let unbulleted = isListLine(sentence) ? stripListMarker(sentence) : sentence
+        let clean = unbulleted.trimmingCharacters(in: CharacterSet(charactersIn: " .؟?!؛\t"))
+        for separator in pairSeparators {
+            guard let range = clean.range(of: separator) else { continue }
+            let term = clean[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
+            let meaning = clean[range.upperBound...].trimmingCharacters(in: CharacterSet(charactersIn: " -–—=:"))
+            let termWords = term.split(separator: " ").count
+            // Short terms (glossary/vocabulary lines) may have short meanings.
+            let minimumMeaning = termWords <= 4 ? 2 : 12
+            if isTerm(term), meaning.count >= minimumMeaning, !meaning.contains(separator) || separator == " - " {
+                return (term, meaning)
+            }
         }
         let normalizedSentence = " " + TextNormalizer.normalize(clean) + " "
         for marker in definitionMarkers {
             let normalizedMarker = TextNormalizer.normalize(marker)
             guard let range = normalizedSentence.range(of: " " + normalizedMarker + " ") else { continue }
             let termWordCount = normalizedSentence[..<range.lowerBound].split(separator: " ").count
+            let markerWordCount = normalizedMarker.split(separator: " ").count
             let words = clean.split(separator: " ").map(String.init)
-            guard termWordCount >= 1, termWordCount <= 6, words.count > termWordCount + 3 else { continue }
+            guard termWordCount >= 1, termWordCount <= 6, words.count > termWordCount + markerWordCount + 2 else { continue }
             let term = words.prefix(termWordCount).joined(separator: " ")
-            let meaning = words.dropFirst(termWordCount).joined(separator: " ")
-            if isTerm(term) { return (term, meaning) }
+            // The answer starts after the linking words ("is the", "هو", "refers to").
+            let meaning = words.dropFirst(termWordCount + markerWordCount).joined(separator: " ")
+            if isTerm(term), meaning.count >= 8 { return (term, meaning) }
         }
         return nil
     }
 
     static func isTerm(_ text: String) -> Bool {
         let words = text.split(separator: " ")
-        guard (1...6).contains(words.count), text.count <= 60 else { return false }
+        guard (1...6).contains(words.count), text.count <= 60,
+              text.contains(where: \.isLetter),
+              !text.lowercased().hasPrefix("http"), !text.lowercased().hasPrefix("www") else { return false }
         let normalized = TextNormalizer.normalize(text)
         return !normalized.isEmpty && !TextNormalizer.isStopword(normalized) && !["this", "it", "هذا", "هذه", "ذلك"].contains(normalized)
     }

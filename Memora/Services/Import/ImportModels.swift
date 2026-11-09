@@ -16,7 +16,12 @@ struct GroundingReport: Hashable {
     var supportScore: Double
     var quoteFound: Bool
     var issues: [String]
-    var isGrounded: Bool { quoteFound && supportScore >= AIResponseValidator.answerSupportThreshold }
+    /// Supported by a verbatim quote and most of the answer's terms, or so strongly by the
+    /// answer's terms that a slightly misquoted sentence doesn't matter.
+    var isGrounded: Bool {
+        (quoteFound && supportScore >= AIResponseValidator.answerSupportThreshold)
+            || supportScore >= AIResponseValidator.strongSupportThreshold
+    }
 }
 
 /// A proposed learning unit awaiting the learner's approval and edits.
@@ -47,6 +52,8 @@ struct DraftRelationship: Hashable {
 struct AnalysisResult {
     var units: [DraftUnit]
     var relationships: [DraftRelationship]
+    /// Something the learner should know about how the analysis went (shown on the review screen).
+    var notice: String? = nil
 }
 
 enum ImportError: LocalizedError {
@@ -56,6 +63,10 @@ enum ImportError: LocalizedError {
     case speechUnavailable
     case speechDenied
     case microphoneDenied
+    case passwordProtected
+    case convertFirst
+    case noTextInImage
+    case noSpeech
 
     var errorDescription: String? {
         switch self {
@@ -65,6 +76,10 @@ enum ImportError: LocalizedError {
         case .speechUnavailable: return L("import.error.speechUnavailable")
         case .speechDenied: return L("import.error.speechDenied")
         case .microphoneDenied: return L("import.error.micDenied")
+        case .passwordProtected: return L("import.error.password")
+        case .convertFirst: return L("import.error.convert")
+        case .noTextInImage: return L("import.error.noTextInImage")
+        case .noSpeech: return L("import.error.noSpeech")
         }
     }
 }

@@ -3,8 +3,10 @@ import Charts
 
 struct AnalyticsView: View {
     @EnvironmentObject private var store: MemoraStore
+    @EnvironmentObject private var router: AppRouter
     @State private var snapshot = AnalyticsSnapshot()
     @State private var computedAt: Date?
+    @State private var isStale = true
 
     var body: some View {
         NavigationStack {
@@ -47,15 +49,25 @@ struct AnalyticsView: View {
             }
             .memoraScreen()
             .navigationTitle(L("tab.analytics"))
-            .onAppear(perform: recompute)
-            .onChange(of: store.db.lastModified) { _, _ in recompute() }
+            .onAppear { if isVisible { recompute() } }
+            // On iPhone every tab stays alive; recomputing the whole dashboard after each
+            // answer while it is hidden slowed study sessions down. Recompute when shown.
+            .onChange(of: store.db.lastModified) { _, _ in
+                if isVisible { recompute() } else { isStale = true }
+            }
+            .onChange(of: router.selectedTab) { _, tab in
+                if tab == .analytics && isStale { recompute() }
+            }
             .refreshable { recompute() }
         }
     }
 
+    private var isVisible: Bool { router.selectedTab == .analytics }
+
     private func recompute() {
         snapshot = AnalyticsEngine.compute(db: store.db, scheduler: store.scheduler, now: Date())
         computedAt = Date()
+        isStale = false
     }
 
     private var disclaimer: some View {

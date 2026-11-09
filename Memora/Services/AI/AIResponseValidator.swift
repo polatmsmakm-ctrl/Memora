@@ -94,20 +94,98 @@ struct ItemEnrichment {
 /// extracted units are supported by verbatim quotes from the source, rejects variants
 /// that drift from the original meaning and hints that give the answer away.
 enum AIResponseValidator {
-    static let answerSupportThreshold = 0.6
+    static let answerSupportThreshold = 0.5
+    static let strongSupportThreshold = 0.8
     static let variantSupportThreshold = 0.5
     static let elaborationSupportThreshold = 0.35
 
-    /// Strips Markdown fences and extracts the outermost JSON object.
+    /// Strips Markdown fences and extracts the outermost JSON object or array.
     static func jsonPayload(from text: String) -> String {
         var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.hasPrefix("```") {
             t = t.replacingOccurrences(of: "```json", with: "").replacingOccurrences(of: "```", with: "")
+            t = t.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        if let start = t.firstIndex(of: "{"), let end = t.lastIndex(of: "}"), start < end {
+        let firstObject = t.firstIndex(of: "{")
+        let firstArray = t.firstIndex(of: "[")
+        let arrayFirst: Bool
+        switch (firstObject, firstArray) {
+        case let (o?, a?): arrayFirst = a < o
+        case (nil, _?): arrayFirst = true
+        default: arrayFirst = false
+        }
+        let open: Character = arrayFirst ? "[" : "{"
+        let close: Character = arrayFirst ? "]" : "}"
+        if let start = t.firstIndex(of: open), let end = t.lastIndex(of: close), start < end {
             return String(t[start...end])
         }
         return t
+    }
+
+    // MARK: Tolerant parsing of extracted units
+
+    /// Accepts `{"units":[…]}`, a bare array of units, or an object whose first array
+    /// holds the units. Units that are malformed are skipped instead of failing the whole
+    /// response; key points given as one string are split.
+    static func parseUnitsResponse(_ text: String) throws -> UnitsResponseDTO {
+        guard let data = jsonPayload(from: text).data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) else {
+            throw AIError.invalidResponse
+        }
+        var rawUnits: [[String: Any]] = []
+        var rawRelationships: [[String: Any]] = []
+        if let array = object as? [[String: Any]] {
+            rawUnits = array
+        } else if let dict = object as? [String: Any] {
+            if let units = dict["units"] as? [[String: Any]] {
+                rawUnits = units
+            } else if let units = dict.values.compactMap({ $0 as? [[String: Any]] }).first(where: { $0.first?["prompt"] != nil || $0.first?["question"] != nil }) {
+                rawUnits = units
+            }
+            rawRelationships = dict["relationships"] as? [[String: Any]] ?? []
+        }
+        let units = rawUnits.compactMap(unit(from:))
+        guard !units.isEmpty || rawUnits.isEmpty else { throw AIError.invalidResponse }
+        let relationships = rawRelationships.compactMap { r -> RelationshipDTO? in
+            guard let from = string(r["from"]), let to = string(r["to"]), let kind = string(r["kind"]) else { return nil }
+            return RelationshipDTO(from: from, to: to, kind: kind)
+        }
+        return UnitsResponseDTO(units: units, relationships: relationships)
+    }
+
+    private static func unit(from d: [String: Any]) -> UnitDTO? {
+        guard let prompt = string(d["prompt"]) ?? string(d["question"]),
+              let answer = string(d["answer"]) else { return nil }
+        let title = string(d["title"]) ?? string(d["concept"]) ?? String(prompt.prefix(60))
+        return UnitDTO(title: title,
+                       kind: string(d["kind"]) ?? string(d["type"]),
+                       prompt: prompt,
+                       answer: answer,
+                       keyPoints: strings(d["keyPoints"] ?? d["key_points"]),
+                       explanation: string(d["explanation"]),
+                       examples: strings(d["examples"]),
+                       sourceQuote: string(d["sourceQuote"]) ?? string(d["source_quote"]) ?? string(d["quote"]),
+                       section: string(d["section"]),
+                       prerequisites: strings(d["prerequisites"]))
+    }
+
+    private static func string(_ value: Any?) -> String? {
+        if let s = value as? String {
+            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let n = value as? NSNumber { return n.stringValue }
+        return nil
+    }
+
+    private static func strings(_ value: Any?) -> [String]? {
+        if let array = value as? [Any] { return array.compactMap { string($0) } }
+        if let s = string(value) {
+            return s.split(whereSeparator: { $0 == "\n" || $0 == "|" || $0 == "؛" || $0 == ";" })
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        }
+        return nil
     }
 
     static func decode<T: Decodable>(_ type: T.Type, from text: String) throws -> T {
@@ -144,11 +222,16 @@ enum AIResponseValidator {
         var issues: [String] = []
         let quote = unit.sourceQuote ?? ""
         let found = quoteFound(quote, in: source)
-        if !found { issues.append(L("validation.quoteMissing")) }
         let support = TextNormalizer.coverage(of: unit.answer, in: source)
-        if support < answerSupportThreshold { issues.append(L("validation.answerUnsupported")) }
-        if TextNormalizer.isBlank(unit.prompt) || TextNormalizer.isBlank(unit.answer) { issues.append(L("validation.empty")) }
-        return GroundingReport(supportScore: support, quoteFound: found, issues: issues)
+        let empty = TextNormalizer.isBlank(unit.prompt) || TextNormalizer.isBlank(unit.answer)
+        var report = GroundingReport(supportScore: empty ? 0 : support, quoteFound: found && !empty, issues: [])
+        if !report.isGrounded {
+            if !found { issues.append(L("validation.quoteMissing")) }
+            if support < strongSupportThreshold { issues.append(L("validation.answerUnsupported")) }
+        }
+        if empty { issues.append(L("validation.empty")) }
+        report.issues = issues
+        return report
     }
 
     static func draftUnits(from response: UnitsResponseDTO, source: String, maxUnits: Int) -> AnalysisResult {

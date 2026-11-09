@@ -69,4 +69,24 @@ extension StringsTable {
         "help.resetTips": ("إظهار التلميحات مجدداً", "Show feature tips again"),
         "help.resetTips.done": ("ستظهر التلميحات مرة أخرى عند فتح كل ميزة.", "Tips will appear again when you open each feature.")
     ]
+
+    // MARK: Import fixes
+
+    static let importFixes: [String: Entry] = [
+        "import.busy.progress": ("%d من %d", "%d of %d"),
+        "import.busy.photos": ("جارٍ تحميل الصور…", "Loading photos…"),
+        "import.error.password": ("ملف PDF محمي بكلمة مرور. افتح القفل ثم استورده مجدداً.", "This PDF is password-protected. Unlock it, then import again."),
+        "import.error.convert": ("صيغة .doc و.pages غير مدعومة. احفظ الملف بصيغة DOCX أو PDF ثم استورده.", ".doc and .pages files aren't supported. Save the file as DOCX or PDF, then import it."),
+        "import.error.noTextInImage": ("لم يُعثر على نص في الصورة. جرّب صورة أوضح أو بإضاءة أفضل.", "No text found in the image. Try a sharper, better-lit photo."),
+        "import.error.noSpeech": ("لم يُسمع كلام واضح في التسجيل.", "No clear speech was detected in the recording."),
+        "import.error.photos": ("تعذّر تحميل الصور المختارة. إذا كانت في iCloud انتظر حتى تُحمّل ثم حاول مرة أخرى.", "The selected photos couldn't be loaded. If they're in iCloud, wait for them to download and try again."),
+        "import.notice.noneGrounded": ("لم تتطابق أي وحدة من الذكاء الاصطناعي مع النص الأصلي، فاستُخدم التحليل المحلي بدلاً منها.", "None of the AI units matched the original text, so on-device analysis was used instead."),
+        "import.notice.partialAI": ("المستند طويل: حلّل الذكاء الاصطناعي أول %d%% منه. لتغطية الباقي استورد الأجزاء الأخرى بشكل منفصل.", "Long document: AI analysed the first %d%%. Import the remaining parts separately to cover them."),
+        "import.notice.aiStopped": ("توقف الذكاء الاصطناعي بعد %d من %d أجزاء (%@). احتُفظ بالوحدات المستخرجة.", "AI stopped after %d of %d parts (%@). The units found so far were kept."),
+        "import.preview.large": ("المستند كبير، لذلك يظهر جزء منه فقط ولا يمكن تعديله هنا. سيُحلل النص كاملاً.", "Large document: only the beginning is shown and editing is off here. The full text will be analysed."),
+        "import.text.tip": ("أفضل النتائج: سطر لكل مصطلح بصيغة «المصطلح: المعنى» أو «المصطلح - المعنى»، أو فقرات بعناوين.", "Best results: one term per line as “term: meaning” or “term - meaning”, or paragraphs with headings."),
+        "import.selectAll": ("تحديد الكل", "Select all"),
+        "import.selectNone": ("إلغاء الكل", "Select none"),
+        "analyze.vocab.prompt": ("ما معنى «%@»؟", "What does “%@” mean?")
+    ]
 }

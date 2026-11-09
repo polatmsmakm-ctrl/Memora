@@ -16,7 +16,7 @@ struct RootView: View {
                 compactLayout
             }
         }
-        .fullScreenCover(item: $router.activeSession) { request in
+        .fullScreenCover(item: $router.activeSession, onDismiss: { router.showPendingImport() }) { request in
             SessionContainerView(request: request)
                 .environmentObject(store)
                 .environmentObject(router)
@@ -24,7 +24,7 @@ struct RootView: View {
                 .environment(\.locale, store.settings.language.locale)
                 .preferredColorScheme(store.settings.appearance.colorScheme)
         }
-        .sheet(isPresented: $router.showImport) {
+        .sheet(isPresented: $router.showImport, onDismiss: { router.startPendingSession() }) {
             ImportView(initialSubjectID: router.importSubjectID)
                 .environmentObject(store)
                 .environmentObject(router)

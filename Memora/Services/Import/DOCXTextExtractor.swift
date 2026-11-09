@@ -4,8 +4,14 @@ import Foundation
 enum DOCXTextExtractor {
     static func extract(url: URL) throws -> ExtractedDocument {
         let data = try Data(contentsOf: url)
-        let archive = try ZipArchiveReader(data: data)
-        let xml = try archive.data(for: "word/document.xml")
+        let archive: ZipArchiveReader
+        let xml: Data
+        do {
+            archive = try ZipArchiveReader(data: data)
+            xml = try archive.data(for: "word/document.xml")
+        } catch {
+            throw ImportError.unreadable
+        }
         let parser = XMLParser(data: xml)
         let delegate = DOCXParserDelegate()
         parser.delegate = delegate
@@ -42,42 +48,60 @@ private final class DOCXParserDelegate: NSObject, XMLParserDelegate {
     }
 
     var paragraphs: [Paragraph] = []
-    private var current: Paragraph?
+    /// Paragraphs can be nested (text boxes, shapes), so a stack keeps outer text intact.
+    private var stack: [Paragraph] = []
     private var inText = false
+    private var inDeleted = 0
+
+    private func mutateCurrent(_ body: (inout Paragraph) -> Void) {
+        guard !stack.isEmpty else { return }
+        body(&stack[stack.count - 1])
+    }
 
     func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?,
                 qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
         switch elementName {
         case "w:p":
-            current = Paragraph()
+            stack.append(Paragraph())
         case "w:pStyle":
-            if let value = attributeDict["w:val"] { current?.headingLevel = Self.headingLevel(fromStyle: value) }
+            if let value = attributeDict["w:val"], let level = Self.headingLevel(fromStyle: value) {
+                mutateCurrent { $0.headingLevel = level }
+            }
         case "w:outlineLvl":
-            if let value = attributeDict["w:val"], let level = Int(value), level < 6 { current?.headingLevel = level + 1 }
+            if let value = attributeDict["w:val"], let level = Int(value), level < 6 {
+                mutateCurrent { $0.headingLevel = level + 1 }
+            }
         case "w:numPr":
-            current?.isListItem = true
+            mutateCurrent { $0.isListItem = true }
+        case "w:del":
+            // Tracked deletions are not part of the visible document.
+            inDeleted += 1
         case "w:t":
-            inText = true
+            inText = inDeleted == 0
         case "w:tab":
-            current?.text += "\t"
+            mutateCurrent { $0.text += "\t" }
         case "w:br", "w:cr":
-            current?.text += "\n"
+            mutateCurrent { $0.text += "\n" }
         default:
             break
         }
     }
 
     func parser(_ parser: XMLParser, foundCharacters string: String) {
-        if inText { current?.text += string }
+        if inText { mutateCurrent { $0.text += string } }
     }
 
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
         switch elementName {
         case "w:t":
             inText = false
+        case "w:del":
+            inDeleted = max(0, inDeleted - 1)
+        case "w:tc":
+            // Separate table cells so their text doesn't run together.
+            mutateCurrent { if !$0.text.isEmpty && !$0.text.hasSuffix(" ") { $0.text += " " } }
         case "w:p":
-            if let p = current { paragraphs.append(p) }
-            current = nil
+            if let p = stack.popLast() { paragraphs.append(p) }
         default:
             break
         }

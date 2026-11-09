@@ -27,8 +27,10 @@ enum FileLocations {
         return dir
     }
 
-    /// Copies a security-scoped URL (Files app) into the app's temp folder by streaming,
-    /// so large files are never loaded into memory at once.
+    /// Copies a security-scoped URL (Files app, iCloud Drive, "Open in Memora") into the
+    /// app's temp folder. A coordinated read makes iCloud download files that are not yet
+    /// on the device; the copy is done by the file system, so large files are never loaded
+    /// into memory at once.
     static func copyToImports(_ url: URL) throws -> URL {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
@@ -36,7 +38,32 @@ enum FileLocations {
         if FileManager.default.fileExists(atPath: destination.path) {
             try FileManager.default.removeItem(at: destination)
         }
-        try FileManager.default.copyItem(at: url, to: destination)
+
+        var coordinationError: NSError?
+        var copyError: Error?
+        NSFileCoordinator(filePresenter: nil).coordinate(readingItemAt: url, options: [.withoutChanges], error: &coordinationError) { readURL in
+            do {
+                try FileManager.default.copyItem(at: readURL, to: destination)
+            } catch {
+                copyError = error
+            }
+        }
+        if coordinationError != nil || copyError != nil {
+            // Fall back to a direct copy (some providers do not support coordination).
+            if !FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.copyItem(at: url, to: destination)
+            }
+        }
+        removeIfInbox(url)
         return destination
+    }
+
+    /// Files handed over with "Open in Memora" may be placed in Documents/Inbox; remove
+    /// them after copying so they don't pile up in the Files app.
+    static func removeIfInbox(_ url: URL) {
+        let inbox = documents.appendingPathComponent("Inbox", isDirectory: true).standardizedFileURL.path
+        if url.standardizedFileURL.path.hasPrefix(inbox) {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }

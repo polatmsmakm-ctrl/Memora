@@ -16,8 +16,9 @@ final class GeminiProvider: AIProvider {
         self.model = (trimmed.isEmpty ? Self.defaultModel : trimmed).replacingOccurrences(of: "models/", with: "")
         self.apiKeyProvider = apiKeyProvider
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 60
-        configuration.timeoutIntervalForResource = 180
+        // Generating a whole set of learning units can take well over a minute.
+        configuration.timeoutIntervalForRequest = 150
+        configuration.timeoutIntervalForResource = 300
         configuration.waitsForConnectivity = false
         self.session = URLSession(configuration: configuration)
     }

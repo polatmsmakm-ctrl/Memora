@@ -37,10 +37,29 @@ final class AppRouter: ObservableObject {
     @Published var activeSession: SessionRequest?
     @Published var showImport = false
     @Published var importSubjectID: UUID?
+    /// File handed to the app with "Open in Memora" / the share sheet, waiting to be imported.
+    @Published var pendingImportURL: URL?
+    /// Session to start once the import sheet has finished closing.
+    var pendingSession: SessionRequest?
 
     func start(_ request: SessionRequest) {
         Haptics.tap()
         activeSession = request
+    }
+
+    /// Called from the import sheet's onDismiss, so the full-screen session is presented
+    /// only after the sheet is fully gone (presenting during the dismissal is dropped by iOS).
+    func startPendingSession() {
+        guard let request = pendingSession else { return }
+        pendingSession = nil
+        start(request)
+    }
+
+    /// Called when a study session closes: opens a file that arrived in the meantime.
+    func showPendingImport() {
+        guard pendingImportURL != nil, !showImport else { return }
+        importSubjectID = nil
+        showImport = true
     }
 
     func openReview() {
@@ -54,6 +73,15 @@ final class AppRouter: ObservableObject {
     }
 
     func handle(url: URL) {
+        if url.isFileURL {
+            pendingImportURL = url
+            // An open import sheet picks the file up itself; a running study session is
+            // not interrupted — the import opens when it closes (see showPendingImport).
+            if showImport || activeSession != nil { return }
+            importSubjectID = nil
+            showImport = true
+            return
+        }
         guard url.scheme == "memora" else { return }
         switch url.host {
         case "review": openReview()

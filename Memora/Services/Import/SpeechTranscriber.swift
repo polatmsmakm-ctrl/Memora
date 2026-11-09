@@ -29,13 +29,29 @@ enum SpeechTranscriber {
 
     static func transcribe(url: URL, localeIdentifier: String) async throws -> String {
         guard await requestAuthorization() else { throw ImportError.speechDenied }
-        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier)), recognizer.isAvailable else {
+        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier)) else {
             throw ImportError.speechUnavailable
         }
+        // On-device first (no time limit, offline). The language model can be reported as
+        // supported but not yet downloaded, so a failure falls back to Apple's servers.
+        if recognizer.supportsOnDeviceRecognition {
+            do {
+                return try await recognize(url: url, recognizer: recognizer, onDevice: true)
+            } catch ImportError.noSpeech {
+                throw ImportError.noSpeech
+            } catch {
+                // fall through to server recognition
+            }
+        }
+        guard recognizer.isAvailable else { throw ImportError.speechUnavailable }
+        return try await recognize(url: url, recognizer: recognizer, onDevice: false)
+    }
+
+    private static func recognize(url: URL, recognizer: SFSpeechRecognizer, onDevice: Bool) async throws -> String {
         let request = SFSpeechURLRecognitionRequest(url: url)
         request.shouldReportPartialResults = false
         request.addsPunctuation = true
-        if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
+        request.requiresOnDeviceRecognition = onDevice
 
         let session = TranscriptionSession(recognizer: recognizer)
         return try await withCheckedThrowingContinuation { continuation in
@@ -51,8 +67,8 @@ enum SpeechTranscriber {
                 if let result, result.isFinal, once.claim() {
                     session.finish()
                     let text = result.bestTranscription.formattedString
-                    if text.isEmpty {
-                        continuation.resume(throwing: ImportError.empty)
+                    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        continuation.resume(throwing: ImportError.noSpeech)
                     } else {
                         continuation.resume(returning: text)
                     }

@@ -17,18 +17,35 @@ struct AIService {
     // MARK: Import
 
     /// Splits long sources into chunks to keep requests efficient, then merges and validates.
+    static let maxChunksPerImport = 6
+
+    /// Analyses up to `maxChunksPerImport` chunks. If a later chunk fails (e.g. the free
+    /// quota runs out) the units already extracted are kept and a notice explains it.
     func generateUnits(from document: ExtractedDocument, maxUnits: Int) async throws -> AnalysisResult {
         let chunks = Self.chunk(document.text, size: Self.maxSourceCharactersPerRequest)
-        let perChunk = max(3, maxUnits / max(1, chunks.count))
+        let used = Array(chunks.prefix(Self.maxChunksPerImport))
+        let perChunk = max(3, Int((Double(maxUnits) / Double(max(1, used.count))).rounded(.up)))
         var units: [DraftUnit] = []
         var relationships: [DraftRelationship] = []
-        for chunk in chunks.prefix(6) {
+        var notes: [String] = []
+        if chunks.count > used.count {
+            notes.append(LF("import.notice.partialAI", used.count * 100 / chunks.count))
+        }
+        for (index, chunk) in used.enumerated() {
+            try Task.checkCancellation()
             let request = AIRequest(systemInstruction: AIPrompts.units(maxUnits: perChunk, language: languageCode),
                                     messages: [AIMessage(role: .user, text: "SOURCE:\n" + chunk)],
                                     jsonOutput: true,
                                     temperature: 0.2)
-            let text = try await provider.generate(request)
-            let dto = try AIResponseValidator.decode(UnitsResponseDTO.self, from: text)
+            let dto: UnitsResponseDTO
+            do {
+                let text = try await provider.generate(request)
+                dto = try AIResponseValidator.parseUnitsResponse(text)
+            } catch {
+                if error is CancellationError || units.isEmpty { throw error }
+                notes.append(LF("import.notice.aiStopped", index, used.count, (error as? LocalizedError)?.errorDescription ?? error.localizedDescription))
+                break
+            }
             let result = AIResponseValidator.draftUnits(from: dto, source: chunk, maxUnits: perChunk)
             for unit in result.units where !units.contains(where: { TextNormalizer.normalize($0.title) == TextNormalizer.normalize(unit.title) }) {
                 var located = unit
@@ -41,19 +58,25 @@ struct AIService {
             relationships.append(contentsOf: result.relationships)
             if units.count >= maxUnits { break }
         }
-        return AnalysisResult(units: Array(units.prefix(maxUnits)), relationships: relationships)
+        return AnalysisResult(units: Array(units.prefix(maxUnits)), relationships: relationships,
+                              notice: notes.isEmpty ? nil : notes.joined(separator: "\n"))
     }
 
+    /// Splits on paragraph boundaries. Lengths are tracked incrementally (String.count is
+    /// O(n), so recomputing it per paragraph is quadratic on long books).
     static func chunk(_ text: String, size: Int) -> [String] {
         guard text.count > size else { return [text] }
         var chunks: [String] = []
         var current = ""
+        var currentLength = 0
         for paragraph in text.components(separatedBy: "\n") {
-            if current.count + paragraph.count + 1 > size, !current.isEmpty {
+            let length = paragraph.count
+            if currentLength + length + 1 > size, !current.isEmpty {
                 chunks.append(current)
                 current = ""
+                currentLength = 0
             }
-            if paragraph.count > size {
+            if length > size {
                 var start = paragraph.startIndex
                 while start < paragraph.endIndex {
                     let end = paragraph.index(start, offsetBy: size, limitedBy: paragraph.endIndex) ?? paragraph.endIndex
@@ -61,7 +84,12 @@ struct AIService {
                     start = end
                 }
             } else {
-                current += (current.isEmpty ? "" : "\n") + paragraph
+                if !current.isEmpty {
+                    current += "\n"
+                    currentLength += 1
+                }
+                current += paragraph
+                currentLength += length
             }
         }
         if !current.isEmpty { chunks.append(current) }

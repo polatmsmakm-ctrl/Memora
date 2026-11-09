@@ -28,8 +28,15 @@ final class ImportViewModel: ObservableObject {
     @Published private(set) var savedItemIDs: [UUID] = []
     @Published private(set) var savedSubjectID: UUID?
 
+    /// Above this size the extracted text is shown read-only: a SwiftUI text editor with
+    /// hundreds of thousands of characters freezes the interface.
+    static let editableTextLimit = 20_000
+
     var isBusy: Bool { busyMessage != nil }
     var includedCount: Int { units.filter(\.include).count }
+    var isTextEditable: Bool { (document?.text.count ?? 0) <= Self.editableTextLimit }
+
+    private var workTask: Task<Void, Never>?
 
     init(subjectID: UUID?) {
         self.subjectID = subjectID
@@ -37,20 +44,27 @@ final class ImportViewModel: ObservableObject {
 
     // MARK: Extraction
 
-    func importFile(_ url: URL, language: AppLanguage) async {
-        await run(L("import.busy.extracting")) {
-            try await DocumentImporter.extract(from: url, speechLocale: language.speechLocaleIdentifier)
+    func importFile(_ url: URL, language: AppLanguage) {
+        let base = L("import.busy.extracting")
+        run(base) { [weak self] in
+            try await DocumentImporter.extract(from: url, speechLocale: language.speechLocaleIdentifier) { done, total in
+                Task { @MainActor in self?.updateProgress(base, done, total) }
+            }
         }
     }
 
-    func importImages(_ images: [UIImage], title: String) async {
-        await run(L("import.busy.ocr")) {
-            try await DocumentImporter.fromImages(images, title: title)
+    func importImages(_ images: [UIImage], title: String) {
+        let base = L("import.busy.ocr")
+        run(base) { [weak self] in
+            try await DocumentImporter.fromImages(images, title: title) { done, total in
+                Task { @MainActor in self?.updateProgress(base, done, total) }
+            }
         }
     }
 
-    func importAudio(_ url: URL, language: AppLanguage) async {
-        await run(L("import.busy.transcribing")) {
+    func importAudio(_ url: URL, language: AppLanguage) {
+        run(L("import.busy.transcribing")) {
+            defer { try? FileManager.default.removeItem(at: url) }
             let text = try await SpeechTranscriber.transcribe(url: url, localeIdentifier: language.speechLocaleIdentifier)
             return DocumentImporter.fromText(text, title: L("import.voiceTitle") + " " + Formatters.date(Date(), time: .short), kind: .audio)
         }
@@ -59,68 +73,122 @@ final class ImportViewModel: ObservableObject {
     func useText() {
         let text = pastedText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        let firstLine = text.components(separatedBy: .newlines).first ?? ""
-        let title = TextNormalizer.isBlank(pastedTitle) ? String(firstLine.prefix(60)) : pastedTitle
+        UIApplication.shared.dismissKeyboard()
+        let firstLine = text.components(separatedBy: .newlines).first { !TextNormalizer.isBlank($0) } ?? ""
+        let title = TextNormalizer.isBlank(pastedTitle) ? String(firstLine.trimmingCharacters(in: .whitespaces).prefix(60)) : pastedTitle
         setDocument(DocumentImporter.fromText(text, title: title, kind: pastedKind))
     }
 
-    private func run(_ message: String, _ work: () async throws -> ExtractedDocument) async {
+    func cancelWork() {
+        workTask?.cancel()
+        workTask = nil
+        busyMessage = nil
+    }
+
+    private func updateProgress(_ base: String, _ done: Int, _ total: Int) {
+        guard busyMessage != nil else { return }
+        busyMessage = total > 1 ? base + "\n" + LF("import.busy.progress", done, total) : base
+    }
+
+    private func run(_ message: String, _ work: @escaping () async throws -> ExtractedDocument) {
+        workTask?.cancel()
         busyMessage = message
         errorMessage = nil
-        defer { busyMessage = nil }
-        do {
-            let extracted = try await work()
-            setDocument(extracted)
-        } catch {
-            errorMessage = error.localizedDescription
-            Haptics.error()
+        workTask = Task { [weak self] in
+            do {
+                let extracted = try await work()
+                guard !Task.isCancelled else { return }
+                self?.setDocument(extracted)
+            } catch is CancellationError {
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.errorMessage = error.localizedDescription
+                Haptics.error()
+            }
+            self?.busyMessage = nil
         }
     }
 
     private func setDocument(_ doc: ExtractedDocument) {
         document = doc
-        editableText = doc.text
+        editableText = doc.text.count <= Self.editableTextLimit ? doc.text : ""
+        if TextNormalizer.isBlank(newSubjectName) && subjectID == nil {
+            newSubjectName = String(doc.title.prefix(60))
+        }
         stage = .extracted
         Haptics.success()
     }
 
     // MARK: Analysis
 
-    func analyze(settings: AppSettings) async {
+    func analyze(settings: AppSettings) {
         guard var doc = document else { return }
-        if editableText != doc.text {
+        if isTextEditable && editableText != doc.text {
             // The learner explicitly corrected the extracted text (e.g. OCR errors).
+            guard !TextNormalizer.isBlank(editableText) else { return }
             doc.text = editableText
             doc.sections = StructureDetector.sections(from: editableText, pageNumber: nil)
             document = doc
         }
+        UIApplication.shared.dismissKeyboard()
         notice = nil
+        errorMessage = nil
         busyMessage = L("import.busy.analyzing")
-        defer { busyMessage = nil }
-        var result: AnalysisResult?
-        if useAI && AIService.isAvailable {
-            do {
-                result = try await AIService.make(settings: settings).generateUnits(from: doc, maxUnits: maxUnits)
-                if let r = result, r.units.contains(where: { !$0.include }) {
-                    notice = L("import.notice.ungrounded")
+        let wantsAI = useAI && AIService.isAvailable
+        let limit = maxUnits
+        let service = AIService.make(settings: settings)
+        let source = doc
+        workTask?.cancel()
+        workTask = Task { [weak self] in
+            var notes: [String] = []
+            var aiResult: AnalysisResult?
+            if wantsAI {
+                do {
+                    let result = try await service.generateUnits(from: source, maxUnits: limit)
+                    if let note = result.notice { notes.append(note) }
+                    if result.units.contains(where: { $0.include }) {
+                        aiResult = result
+                        if result.units.contains(where: { !$0.include }) { notes.append(L("import.notice.ungrounded")) }
+                    } else if !result.units.isEmpty {
+                        notes.append(L("import.notice.noneGrounded"))
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    notes.append(LF("import.notice.aiFallback", error.localizedDescription))
                 }
-            } catch {
-                notice = LF("import.notice.aiFallback", error.localizedDescription)
             }
+            let analysis: AnalysisResult
+            if let aiResult {
+                analysis = aiResult
+            } else {
+                // Heavy text processing runs off the main thread so the interface stays responsive.
+                analysis = await Task.detached(priority: .userInitiated) {
+                    ContentAnalyzer.analyze(source, maxUnits: limit)
+                }.value
+            }
+            guard !Task.isCancelled, let self else { return }
+            self.busyMessage = nil
+            self.units = analysis.units
+            self.relationships = analysis.relationships
+            self.notice = notes.isEmpty ? nil : notes.joined(separator: "\n")
+            if analysis.units.isEmpty {
+                self.errorMessage = L("import.error.noUnits")
+                Haptics.error()
+                return
+            }
+            self.stage = .approve
+            Haptics.success()
         }
-        let analysis: AnalysisResult
-        if let aiResult = result, !aiResult.units.isEmpty {
-            analysis = aiResult
-        } else {
-            analysis = ContentAnalyzer.analyze(doc, maxUnits: maxUnits)
-        }
-        units = analysis.units
-        relationships = analysis.relationships
-        if units.isEmpty {
-            errorMessage = L("import.error.noUnits")
-            return
-        }
-        stage = .approve
+    }
+
+    func setAllIncluded(_ include: Bool) {
+        for index in units.indices { units[index].include = include }
+        Haptics.selection()
+    }
+
+    func backToText() {
+        stage = .extracted
     }
 
     // MARK: Save
@@ -200,6 +268,7 @@ final class ImportViewModel: ObservableObject {
     }
 
     func reset() {
+        cancelWork()
         stage = .input
         document = nil
         editableText = ""

@@ -10,6 +10,7 @@ struct ImportView: View {
 
     @State private var showFiles = false
     @State private var photoItems: [PhotosPickerItem] = []
+    @State private var loadingPhotos = false
     @State private var showScanner = false
     @State private var showRecorder = false
     @State private var manualItem: LearningItem?
@@ -25,7 +26,7 @@ struct ImportView: View {
                 switch vm.stage {
                 case .input: inputStage
                 case .extracted: extractedStage
-                case .approve: ImportReviewView(vm: vm)
+                case .approve: ImportReviewView(vm: vm) { vm.save(to: store) }
                 case .finished: finishedStage
                 }
             }
@@ -33,7 +34,12 @@ struct ImportView: View {
             .navigationTitle(L("import.title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button(L("common.close")) { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(L("common.close")) {
+                        vm.cancelWork()
+                        dismiss()
+                    }
+                }
                 if vm.stage == .approve {
                     ToolbarItem(placement: .confirmationAction) {
                         Button(LF("import.saveN", vm.includedCount)) { vm.save(to: store) }
@@ -42,52 +48,93 @@ struct ImportView: View {
                 }
             }
             .keyboardDoneButton()
-            .overlay {
-                if let message = vm.busyMessage {
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text(message).font(.callout)
-                    }
-                    .padding(24)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                }
-            }
+            .overlay { busyOverlay }
             .alert(L("common.error"), isPresented: Binding(get: { vm.errorMessage != nil }, set: { if !$0 { vm.errorMessage = nil } })) {
                 Button(L("common.ok"), role: .cancel) {}
             } message: { Text(vm.errorMessage ?? "") }
             .fileImporter(isPresented: $showFiles, allowedContentTypes: DocumentImporter.importableTypes, allowsMultipleSelection: false) { result in
-                if case .success(let urls) = result, let url = urls.first {
-                    Task { await vm.importFile(url, language: store.settings.language) }
+                switch result {
+                case .success(let urls):
+                    if let url = urls.first { vm.importFile(url, language: store.settings.language) }
+                case .failure(let error):
+                    vm.errorMessage = error.localizedDescription
                 }
             }
             .onChange(of: photoItems) { _, items in
                 guard !items.isEmpty else { return }
-                Task {
-                    var images: [UIImage] = []
-                    for item in items {
-                        if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) { images.append(image) }
-                    }
-                    photoItems = []
-                    if !images.isEmpty { await vm.importImages(images, title: L("import.photosTitle")) }
-                }
+                loadPhotos(items)
             }
             .fullScreenCover(isPresented: $showScanner) {
                 DocumentScannerView(onFinish: { images in
                     showScanner = false
-                    Task { await vm.importImages(images, title: L("import.scanTitle")) }
+                    vm.importImages(images, title: L("import.scanTitle"))
                 }, onCancel: { showScanner = false })
                 .ignoresSafeArea()
             }
             .sheet(isPresented: $showRecorder) {
                 VoiceRecorderSheet { url in
                     showRecorder = false
-                    Task { await vm.importAudio(url, language: store.settings.language) }
+                    vm.importAudio(url, language: store.settings.language)
                 }
                 .environment(\.layoutDirection, store.settings.language.layoutDirection)
             }
             .sheet(item: $manualItem) { item in
-                ItemEditorView(item: item, isNew: true).environmentObject(store)
+                ItemEditorView(item: item, isNew: true)
+                    .environmentObject(store)
+                    .environment(\.layoutDirection, store.settings.language.layoutDirection)
             }
+            .task { consumePendingFile() }
+            .onChange(of: router.pendingImportURL) { _, _ in consumePendingFile() }
+        }
+        .interactiveDismissDisabled(vm.isBusy || vm.stage == .approve)
+    }
+
+    /// Imports a file that was shared to the app ("Open in Memora").
+    private func consumePendingFile() {
+        guard let url = router.pendingImportURL else { return }
+        router.pendingImportURL = nil
+        textMode = false
+        vm.reset()
+        vm.importFile(url, language: store.settings.language)
+    }
+
+    private func loadPhotos(_ items: [PhotosPickerItem]) {
+        loadingPhotos = true
+        Task {
+            var images: [UIImage] = []
+            for item in items {
+                if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
+                    images.append(image)
+                }
+            }
+            photoItems = []
+            loadingPhotos = false
+            if images.isEmpty {
+                vm.errorMessage = L("import.error.photos")
+            } else {
+                vm.importImages(images, title: L("import.photosTitle"))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var busyOverlay: some View {
+        if let message = vm.busyMessage ?? (loadingPhotos ? L("import.busy.photos") : nil) {
+            ZStack {
+                Color.black.opacity(0.35).ignoresSafeArea()
+                VStack(spacing: 14) {
+                    ProgressView().controlSize(.large)
+                    Text(message).font(.callout).multilineTextAlignment(.center).monospacedDigit()
+                    if vm.isBusy {
+                        Button(L("common.cancel")) { vm.cancelWork() }
+                            .buttonStyle(SecondaryButtonStyle(tint: .secondary))
+                    }
+                }
+                .padding(24)
+                .frame(maxWidth: 320)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            .transition(.opacity)
         }
     }
 
@@ -129,6 +176,7 @@ struct ImportView: View {
                                     .buttonStyle(PrimaryButtonStyle())
                                     .disabled(TextNormalizer.isBlank(vm.pastedText))
                             }
+                            Text(L("import.text.tip")).font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 } else {
@@ -143,10 +191,7 @@ struct ImportView: View {
                             sourceTile(L("import.src.scan"), "doc.viewfinder") { showScanner = true }
                         }
                         sourceTile(L("import.src.voice"), "mic") { showRecorder = true }
-                        sourceTile(L("import.src.manual"), "square.and.pencil") {
-                            manualItem = LearningItem(subjectID: vm.subjectID ?? store.db.subjects.first?.id ?? UUID(),
-                                                      title: "", prompt: "", answer: "")
-                        }
+                        sourceTile(L("import.src.manual"), "square.and.pencil") { openManualEditor() }
                     }
                     Text(L("import.formats")).font(.caption).foregroundStyle(.secondary)
                 }
@@ -155,6 +200,19 @@ struct ImportView: View {
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
         }
+        .scrollDismissesKeyboard(.interactively)
+    }
+
+    /// Manual questions go to the chosen subject, or to a new subject named in the field.
+    private func openManualEditor() {
+        var subjectID = vm.subjectID ?? store.db.subjects.first?.id
+        if vm.subjectID == nil, !TextNormalizer.isBlank(vm.newSubjectName) {
+            let subject = Subject(name: vm.newSubjectName.trimmingCharacters(in: .whitespacesAndNewlines))
+            store.addSubject(subject)
+            vm.subjectID = subject.id
+            subjectID = subject.id
+        }
+        manualItem = LearningItem(subjectID: subjectID ?? UUID(), title: "", prompt: "", answer: "")
     }
 
     private func sourceTile(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
@@ -188,8 +246,20 @@ struct ImportView: View {
                     }
                     GlassCard { subjectPicker }
                     Text(L("import.preview")).font(.subheadline.weight(.semibold))
-                    AnswerEditor(text: $vm.editableText, placeholder: "", minHeight: 240)
-                    Text(L("import.preview.note")).font(.caption).foregroundStyle(.secondary)
+                    if vm.isTextEditable {
+                        AnswerEditor(text: $vm.editableText, placeholder: "", minHeight: 240)
+                        Text(L("import.preview.note")).font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        ScrollView {
+                            Text(String(doc.text.prefix(6000)) + "…")
+                                .font(.callout)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                        }
+                        .frame(height: 260)
+                        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        Text(L("import.preview.large")).font(.caption).foregroundStyle(.secondary)
+                    }
                     GlassCard {
                         VStack(alignment: .leading, spacing: 10) {
                             Toggle(L("import.useAI"), isOn: $vm.useAI).disabled(!AIService.isAvailable)
@@ -206,9 +276,9 @@ struct ImportView: View {
                     HStack {
                         Button(L("import.back")) { vm.reset() }.buttonStyle(SecondaryButtonStyle(tint: .secondary))
                         Spacer()
-                        Button(L("import.analyze")) { Task { await vm.analyze(settings: store.settings) } }
+                        Button(L("import.analyze")) { vm.analyze(settings: store.settings) }
                             .buttonStyle(PrimaryButtonStyle())
-                            .disabled(vm.isBusy || TextNormalizer.isBlank(vm.editableText))
+                            .disabled(vm.isBusy || (vm.isTextEditable && TextNormalizer.isBlank(vm.editableText)))
                     }
                 }
             }
@@ -216,6 +286,7 @@ struct ImportView: View {
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
         }
+        .scrollDismissesKeyboard(.interactively)
     }
 
     private var finishedStage: some View {
@@ -224,16 +295,12 @@ struct ImportView: View {
                 EmptyStateView(systemImage: "checkmark.circle", title: LF("import.done.title", vm.savedItemIDs.count), message: L("import.done.message"))
                 if store.settings.pretestNewTopics {
                     Button {
-                        let request = SessionRequest(mode: .pretest, subjectID: vm.savedSubjectID, itemIDs: Array(vm.savedItemIDs.prefix(10)))
-                        dismiss()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { router.start(request) }
+                        startAfterClosing(SessionRequest(mode: .pretest, subjectID: vm.savedSubjectID, itemIDs: Array(vm.savedItemIDs.prefix(10))))
                     } label: { Label(L("import.done.pretest"), systemImage: StudyMode.pretest.systemImage) }
                     .buttonStyle(SecondaryButtonStyle(fullWidth: true, tint: Theme.violet))
                 }
                 Button {
-                    let request = SessionRequest(mode: .learn, subjectID: vm.savedSubjectID)
-                    dismiss()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { router.start(request) }
+                    startAfterClosing(SessionRequest(mode: .learn, subjectID: vm.savedSubjectID, itemIDs: vm.savedItemIDs))
                 } label: { Label(L("import.done.learn"), systemImage: "book") }
                 .buttonStyle(PrimaryButtonStyle(fullWidth: true))
                 Button(L("import.another")) { vm.reset() }.buttonStyle(SecondaryButtonStyle(fullWidth: true, tint: .secondary))
@@ -242,5 +309,11 @@ struct ImportView: View {
             .frame(maxWidth: 560)
             .frame(maxWidth: .infinity)
         }
+    }
+
+    /// The session opens from the sheet's onDismiss, after the sheet has fully closed.
+    private func startAfterClosing(_ request: SessionRequest) {
+        router.pendingSession = request
+        dismiss()
     }
 }

@@ -35,8 +35,12 @@ final class LearnSessionViewModel: ObservableObject {
         self.store = store
         var generator = SeededGenerator(date: Date())
         let builder = SessionBuilder(scheduler: store.scheduler, settings: store.settings, now: Date())
-        let selected = builder.selectItems(for: request, in: store.db, excluded: store.experimentLockedItemIDs, rng: &generator)
-            .filter { $0.card.state == .new }
+        var selected = builder.selectItems(for: request, in: store.db, excluded: store.experimentLockedItemIDs, rng: &generator)
+            .filter { $0.card.state == .new && !$0.isSuspended }
+        if let ids = request.itemIDs, ids.count > 1 {
+            // A batch (e.g. just imported) still respects prerequisites and the daily new-item cap.
+            selected = builder.orderedNewItems(pool: selected, links: store.db.links, limit: builder.remainingNewAllowance(db: store.db))
+        }
         items = selected
         step = selected.first.map(initialStep(for:)) ?? .empty
     }

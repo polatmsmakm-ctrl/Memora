@@ -153,7 +153,7 @@ extension StringsTable {
         "import.src.scan": ("مسح مستند", "Scan document"),
         "import.src.voice": ("تسجيل صوتي", "Voice recording"),
         "import.src.manual": ("سؤال يدوي", "Manual question"),
-        "import.formats": ("يدعم: نص، ملاحظات، PDF (مع قراءة الصفحات الممسوحة)، DOCX، الصور، لقطات الشاشة، التسجيلات الصوتية.", "Supports text, notes, PDF (incl. scanned pages), DOCX, images, screenshots and audio."),
+        "import.formats": ("يدعم: نص، ملاحظات، PDF (مع قراءة الصفحات الممسوحة)، DOCX، الصور، لقطات الشاشة، التسجيلات الصوتية. يمكنك أيضاً مشاركة ملف من أي تطبيق واختيار «Memora».", "Supports text, notes, PDF (incl. scanned pages), DOCX, images, screenshots and audio. You can also share a file from any app and choose “Memora”."),
         "import.text.title": ("العنوان (اختياري)", "Title (optional)"),
         "import.text.placeholder": ("الصق النص أو اكتب ملاحظاتك هنا…", "Paste text or write your notes…"),
         "import.continue": ("متابعة", "Continue"),
