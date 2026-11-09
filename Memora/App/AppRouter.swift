@@ -131,6 +131,12 @@ final class AppRouter: ObservableObject {
         start(SessionRequest(mode: .smartReview))
     }
 
+    /// From a content reminder: recall exactly the cards that were shown.
+    func openItems(_ ids: [UUID]) {
+        selectedTab = .review
+        start(SessionRequest(mode: .remember, itemIDs: ids))
+    }
+
     func openImport(subjectID: UUID? = nil) {
         importSubjectID = subjectID
         if advancedScreen != nil {

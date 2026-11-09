@@ -49,6 +49,12 @@ struct TodayReviewView: View {
                                 router.start(SessionRequest(mode: .learn, subjectID: subjectID, itemIDs: Array(fresh.prefix(15).map(\.id))))
                             }
                         }
+                        if store.db.items.contains(where: \.isIntroduced) {
+                            actionCard(count: nil, label: L("today.exam"), button: L("today.exam.go"),
+                                       icon: "checkmark.seal", tint: Theme.success) {
+                                router.start(SessionRequest(mode: .exam, subjectID: subjectID))
+                            }
+                        }
                         Button(L("today.moreModes")) { router.openAdvanced(.reviewModes) }
                             .font(.footnote)
                             .padding(.top, 4)
@@ -72,14 +78,16 @@ struct TodayReviewView: View {
         store.items(in: subjectID).filter { !$0.isIntroduced && !$0.isSuspended }
     }
 
-    private func actionCard(count: Int, label: String, button: String, icon: String, tint: Color, action: @escaping () -> Void) -> some View {
+    private func actionCard(count: Int?, label: String, button: String, icon: String, tint: Color, action: @escaping () -> Void) -> some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
                     Image(systemName: icon).foregroundStyle(tint)
                     Text(label).font(.callout).foregroundStyle(.secondary)
                     Spacer()
-                    Text("\(count)").font(.system(size: 34, weight: .bold, design: .rounded)).monospacedDigit()
+                    if let count {
+                        Text("\(count)").font(.system(size: 34, weight: .bold, design: .rounded)).monospacedDigit()
+                    }
                 }
                 Button(action: action) { Text(button).frame(maxWidth: .infinity) }
                     .buttonStyle(PrimaryButtonStyle(fullWidth: true))

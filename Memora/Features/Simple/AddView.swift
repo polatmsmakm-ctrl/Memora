@@ -7,8 +7,7 @@ struct AddView: View {
     @EnvironmentObject private var store: MemoraStore
     @EnvironmentObject private var router: AppRouter
 
-    @State private var words = true
-    @State private var textMode = false
+    @State private var type: MemorizeType = .auto
     @State private var text = ""
     @State private var photoItem: PhotosPickerItem?
     @State private var showScanner = false
@@ -67,41 +66,66 @@ struct AddView: View {
                 .font(.callout).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text(L("add.kind")).font(.subheadline.weight(.semibold))
-                Picker(L("add.kind"), selection: $words) {
-                    Text(L("add.kind.words")).tag(true)
-                    Text(L("add.kind.cards")).tag(false)
-                }
-                .pickerStyle(.segmented)
-            }
-
-            if textMode {
-                GlassCard {
-                    VStack(spacing: 10) {
-                        AnswerEditor(text: $text, placeholder: L("add.text.placeholder"), minHeight: 200)
-                        HStack {
-                            Button(L("common.cancel")) { textMode = false }
-                                .buttonStyle(SecondaryButtonStyle(tint: .secondary))
-                            Spacer()
-                            Button(L("add.text.go")) { useText() }
-                                .buttonStyle(PrimaryButtonStyle())
-                                .disabled(TextNormalizer.isBlank(text))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(MemorizeType.allCases) { option in
+                        Button {
+                            type = option
+                            Haptics.selection()
+                        } label: {
+                            Label(option.title, systemImage: option.icon)
+                                .font(.footnote.weight(.semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(type == option ? Theme.accent : Theme.accent.opacity(0.12), in: Capsule())
+                                .foregroundStyle(type == option ? Color.white : Theme.accent)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
-            } else {
-                bigButton(L("add.file"), L("add.file.sub"), "doc.richtext") { pickFile() }
-                PhotosPicker(selection: $photoItem, matching: .images) {
-                    bigLabel(L("add.photo"), nil, "photo.on.rectangle")
+            }
+            Text(L("memo.type.\(type.rawValue).hint"))
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            GlassCard {
+                VStack(spacing: 10) {
+                    AnswerEditor(text: $text, placeholder: L("memo.placeholder.\(type.rawValue)"), minHeight: 160)
+                    Button { useText() } label: {
+                        Label(L("memo.go"), systemImage: "sparkles").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(PrimaryButtonStyle(fullWidth: true))
+                    .disabled(TextNormalizer.isBlank(text))
                 }
-                .buttonStyle(.plain)
+            }
+
+            Text(L("memo.orAttach")).font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 10) {
+                smallButton(L("add.file"), "doc.richtext") { pickFile() }
+                PhotosPicker(selection: $photoItem, matching: .images) { smallLabel(L("add.photo"), "photo") }
+                    .buttonStyle(.plain)
                 if DocumentScannerView.isSupported {
-                    bigButton(L("add.scan"), nil, "doc.viewfinder") { showScanner = true }
+                    smallButton(L("add.scan"), "doc.viewfinder") { showScanner = true }
                 }
-                bigButton(L("add.text"), nil, "text.alignleft") { textMode = true }
             }
         }
+    }
+
+    private func smallButton(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { smallLabel(title, icon) }.buttonStyle(.plain)
+    }
+
+    private func smallLabel(_ title: String, _ icon: String) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.accent)
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.primary).lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
+        .contentShape(Rectangle())
     }
 
     private var busyCard: some View {
@@ -147,37 +171,12 @@ struct AddView: View {
         }
     }
 
-    private func bigButton(_ title: String, _ subtitle: String?, _ icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { bigLabel(title, subtitle, icon) }.buttonStyle(.plain)
-    }
-
-    private func bigLabel(_ title: String, _ subtitle: String?, _ icon: String) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: icon)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(Theme.accent)
-                .frame(width: 44, height: 44)
-                .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.body.weight(.semibold)).foregroundStyle(.primary)
-                if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary) }
-            }
-            Spacer()
-            Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-        }
-        .padding(14)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
-        .contentShape(Rectangle())
-    }
-
     // MARK: Actions
 
     private func reset() {
         work?.cancel()
         result = nil
         text = ""
-        textMode = false
         errorText = nil
         busy = false
     }
@@ -216,20 +215,19 @@ struct AddView: View {
         work?.cancel()
         errorText = nil
         busy = true
-        let wantsWords = words
+        let wantedType = type
         let service = AIService.make(settings: store.settings)
         work = Task {
             do {
                 let attachment = try await prepare()
-                let instruction = LF(wantsWords ? "coach.msg.words" : "coach.msg.cards", attachment.fileName)
-                let set = try await service.flashcards(from: attachment, words: wantsWords, instruction: instruction)
+                let set = try await service.memorize(attachment, type: wantedType)
                 guard !Task.isCancelled else { return }
                 if set.cards.isEmpty {
                     errorText = L("coach.cards.empty")
                 } else {
                     let title = TextNormalizer.isBlank(set.title ?? "") ? name : (set.title ?? name)
-                    result = GeneratedCardSet(title: title, cards: set.cards, isVocabulary: wantsWords, remind: wantsWords)
-                    textMode = false
+                    let detected = wantedType == .auto ? (set.type.flatMap(MemorizeType.init(rawValue:)) ?? .facts) : wantedType
+                    result = GeneratedCardSet(title: title, cards: set.cards, type: detected == .auto ? .facts : detected, note: set.note)
                     text = ""
                 }
             } catch is CancellationError {

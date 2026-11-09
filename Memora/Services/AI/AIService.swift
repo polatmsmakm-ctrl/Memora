@@ -176,10 +176,17 @@ struct FlashcardDTO: Codable, Hashable {
     var front: String
     var back: String
     var example: String?
+    var explanation: String?
+    var mnemonic: String?
+    var hint: String?
+    var section: String?
+    var isApplication: Bool?
 }
 
 struct FlashcardSetDTO: Codable {
+    var type: String?
     var title: String?
+    var note: String?
     var cards: [FlashcardDTO]
 }
 
@@ -210,15 +217,41 @@ extension AIService {
                                 jsonOutput: true,
                                 temperature: 0.2)
         let raw = try await provider.generate(request)
-        var set = try AIResponseValidator.decode(FlashcardSetDTO.self, from: raw)
+        return Self.cleaned(try AIResponseValidator.decode(FlashcardSetDTO.self, from: raw))
+    }
+
+    /// Rules, poems, words or notes turned into study cards (the Add screen).
+    func memorize(_ attachment: CoachAttachment, type: MemorizeType) async throws -> FlashcardSetDTO {
+        var text = "Material to memorize:"
+        if let extracted = attachment.extractedText {
+            text = "MATERIAL «\(attachment.fileName)»:\n" + String(extracted.prefix(60_000))
+        }
+        let request = AIRequest(systemInstruction: AIPrompts.memorize(type: type, maxCards: 60, language: languageCode),
+                                messages: [AIMessage(role: .user, text: text)],
+                                attachments: attachment.inlineParts,
+                                jsonOutput: true,
+                                temperature: 0.2)
+        let raw = try await provider.generate(request)
+        return Self.cleaned(try AIResponseValidator.decode(FlashcardSetDTO.self, from: raw))
+    }
+
+    static func cleaned(_ input: FlashcardSetDTO) -> FlashcardSetDTO {
+        var set = input
         var seen = Set<String>()
+        func clean(_ value: String?) -> String? {
+            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : trimmed
+        }
         set.cards = set.cards.compactMap { card in
             let front = card.front.trimmingCharacters(in: .whitespacesAndNewlines)
             let back = card.back.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !front.isEmpty, !back.isEmpty, seen.insert(TextNormalizer.normalize(front)).inserted else { return nil }
-            let example = card.example?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return FlashcardDTO(front: front, back: back, example: (example?.isEmpty ?? true) ? nil : example)
+            guard !front.isEmpty, !back.isEmpty,
+                  seen.insert(TextNormalizer.normalize(front + "|" + back)).inserted else { return nil }
+            return FlashcardDTO(front: front, back: back, example: clean(card.example), explanation: clean(card.explanation),
+                                mnemonic: clean(card.mnemonic), hint: clean(card.hint), section: clean(card.section),
+                                isApplication: card.isApplication)
         }
+        set.note = clean(set.note)
         return set
     }
 }

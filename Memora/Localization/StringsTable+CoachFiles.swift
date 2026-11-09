@@ -24,11 +24,8 @@ extension StringsTable {
         "coach.cards.subject": ("احفظها في", "Save to"),
         "coach.cards.save": ("احفظ البطاقات", "Save cards"),
         "coach.cards.saved": ("انحفظت ✓ تلقاها في المكتبة وبتدخل المراجعة", "Saved ✓ — find them in the Library; they'll come up in review"),
-        "coach.cards.remind": ("ذكّرني فيها بإشعارات يومية", "Remind me daily with notifications"),
-        "coach.cards.remindTime": ("وقت التذكير", "Reminder time"),
-        "coach.cards.remindOn": ("بيوصلك إشعار يومي فيه كلمات لمدة %d يوم ✓", "You'll get a daily words notification for %d days ✓"),
+        "coach.cards.remind": ("ذكّرني فيها بإشعارات متباعدة", "Remind me at spaced intervals"),
         "coach.cards.remindDenied": ("الإشعارات مقفلة. فعّلها لـ Memora من إعدادات الجهاز.", "Notifications are off. Allow them for Memora in device Settings."),
         "coach.cards.empty": ("ما لقيت كلمات أو معلومات تنفع كبطاقات في الملف.", "No words or facts suitable for cards were found in the file."),
-        "coach.words.notifTitle": ("كلمات اليوم 📚", "Today's words 📚"),
     ]
 }

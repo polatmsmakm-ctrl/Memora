@@ -290,7 +290,7 @@ struct CoachView: View {
                 } else {
                     let reply = AIMessage(role: .model, text: result.cards.map { "\($0.front) — \($0.back)" }.joined(separator: "\n"))
                     let title = TextNormalizer.isBlank(result.title ?? "") ? file.title : (result.title ?? file.title)
-                    cardSets[reply.id] = GeneratedCardSet(title: title, cards: result.cards, isVocabulary: words, remind: words)
+                    cardSets[reply.id] = GeneratedCardSet(title: title, cards: result.cards, type: words ? .words : .facts)
                     messages.append(reply)
                 }
             } catch is CancellationError {
@@ -383,18 +383,20 @@ struct TypingIndicator: View {
     }
 }
 
-// MARK: Flashcards made from a file
+// MARK: Cards made by Gemini (Add screen and coach)
 
 struct GeneratedCardSet {
     var title = ""
     var cards: [FlashcardDTO] = []
-    var isVocabulary = false
-    var remind = false
-    var remindMinute = 9 * 60
+    var type: MemorizeType = .facts
+    var note: String?
+    var remind = true
     var subjectID: UUID?
     var saved = false
     var savedItemIDs: [UUID] = []
     var remindStatus: String?
+
+    var isVocabulary: Bool { type == .words }
 }
 
 struct FlashcardSetCard: View {
@@ -409,25 +411,21 @@ struct FlashcardSetCard: View {
         GlassCard {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Image(systemName: cardSet.isVocabulary ? "character.book.closed" : "rectangle.on.rectangle.angled")
-                        .foregroundStyle(Theme.accent)
+                    Image(systemName: cardSet.type.icon).foregroundStyle(Theme.accent)
                     Text(cardSet.title).font(.headline).lineLimit(2)
                     Spacer()
                     Chip(text: LF(cardSet.isVocabulary ? "coach.words.title" : "coach.cards.title", cardSet.cards.count))
                 }
+                if let note = cardSet.note {
+                    Label(note, systemImage: "lightbulb").font(.footnote).foregroundStyle(.secondary)
+                }
                 let shown = showAll ? cardSet.cards : Array(cardSet.cards.prefix(previewCount))
-                ForEach(Array(shown.enumerated()), id: \.offset) { _, card in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(card.front).font(.callout.weight(.semibold))
-                        Text(card.back).font(.callout).foregroundStyle(.secondary)
-                        if let example = card.example { Text(example).font(.caption).italic().foregroundStyle(.secondary) }
+                ForEach(Array(shown.enumerated()), id: \.offset) { offset, card in
+                    let previousSection = offset > 0 ? shown[offset - 1].section : nil
+                    if let section = card.section, section != previousSection {
+                        Text(section).font(.caption.weight(.bold)).foregroundStyle(Theme.accent).padding(.top, 4)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .contextMenu {
-                        Button { UIPasteboard.general.string = card.front + " — " + card.back } label: { Label(L("common.copy"), systemImage: "doc.on.doc") }
-                    }
+                    cardRow(card)
                 }
                 if cardSet.cards.count > previewCount && !showAll {
                     Button(LF("coach.cards.more", cardSet.cards.count - previewCount)) { showAll = true }.font(.footnote)
@@ -447,9 +445,6 @@ struct FlashcardSetCard: View {
                         .pickerStyle(.menu)
                     }
                     Toggle(L("coach.cards.remind"), isOn: $cardSet.remind).font(.footnote)
-                    if cardSet.remind {
-                        DatePicker(L("coach.cards.remindTime"), selection: remindTime, displayedComponents: .hourAndMinute).font(.footnote)
-                    }
                     Button { save() } label: {
                         if saving { ProgressView() } else { Label(L("coach.cards.save"), systemImage: "tray.and.arrow.down") }
                     }
@@ -460,13 +455,24 @@ struct FlashcardSetCard: View {
         }
     }
 
-    private var remindTime: Binding<Date> {
-        Binding(get: {
-            Calendar.current.startOfDay(for: Date()).addingTimeInterval(TimeInterval(cardSet.remindMinute * 60))
-        }, set: { date in
-            let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
-            cardSet.remindMinute = (parts.hour ?? 9) * 60 + (parts.minute ?? 0)
-        })
+    private func cardRow(_ card: FlashcardDTO) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if card.isApplication == true {
+                Text(L("memo.application")).font(.caption2.weight(.bold)).foregroundStyle(Theme.violet)
+            }
+            Text(card.front).font(.callout.weight(.semibold))
+            Text(card.back).font(.callout).foregroundStyle(.secondary)
+            if let example = card.example { Text(example).font(.caption).italic().foregroundStyle(.secondary) }
+            if let mnemonic = card.mnemonic {
+                Label(mnemonic, systemImage: "sparkles").font(.caption).foregroundStyle(Theme.accent)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contextMenu {
+            Button { UIPasteboard.general.string = card.front + " — " + card.back } label: { Label(L("common.copy"), systemImage: "doc.on.doc") }
+        }
     }
 
     private func save() {
@@ -480,30 +486,42 @@ struct FlashcardSetCard: View {
             subjectID = subject.id
         }
         let now = Date()
-        let items = cardSet.cards.enumerated().map { offset, card in
-            LearningItem(subjectID: subjectID,
-                         kind: cardSet.isVocabulary ? .vocabulary : .fact,
-                         title: String(card.front.prefix(80)),
-                         prompt: card.front,
-                         answer: card.back,
-                         examples: card.example.map { [$0] } ?? [],
-                         tags: [cardSet.title],
-                         origin: .ai,
-                         createdAt: now.addingTimeInterval(Double(offset) * 0.001))
+        let type = cardSet.type
+        let setTitle = cardSet.title
+        let remind = cardSet.remind
+        let items: [LearningItem] = cardSet.cards.enumerated().map { offset, card in
+            var item = LearningItem(subjectID: subjectID,
+                                    kind: type.itemKind,
+                                    title: type == .poem ? "\(setTitle) — \(offset + 1)" : String(card.front.prefix(80)),
+                                    prompt: card.front,
+                                    answer: card.back,
+                                    explanation: card.explanation ?? "",
+                                    examples: card.example.map { [$0] } ?? [],
+                                    hints: card.hint.map { [$0] } ?? [],
+                                    mnemonics: card.mnemonic.map { [Mnemonic(kind: type == .words ? .keyword : .association,
+                                                                             content: $0, explanation: "", origin: .ai)] } ?? [],
+                                    tags: [setTitle, card.section].compactMap { $0 },
+                                    origin: .ai,
+                                    createdAt: now.addingTimeInterval(Double(offset) * 0.001))
+            if remind {
+                // Start the spacing schedule now: the first recall prompts arrive in small
+                // batches (5 cards every 2 hours) instead of all at once.
+                item.introducedAt = now
+                item.card.due = now.addingTimeInterval(15 * 60 + Double(offset / 5) * 2 * 3600)
+            }
+            return item
         }
         store.addItems(items)
         cardSet.savedItemIDs = items.map(\.id)
-        let remind = cardSet.remind
-        let words = cardSet.cards.map { WordReminderService.Word(front: $0.front, back: $0.back) }
-        let title = cardSet.title
-        let minute = cardSet.remindMinute
         Task {
             if remind {
-                if let days = await WordReminderService.schedule(words: words, setTitle: title, minuteOfDay: minute) {
-                    cardSet.remindStatus = LF("coach.cards.remindOn", days)
-                } else {
-                    cardSet.remindStatus = L("coach.cards.remindDenied")
-                }
+                let service = ReminderService.shared
+                await service.refreshAuthorization()
+                if service.authorization == .notDetermined { await service.requestAuthorization() }
+                if !store.settings.reminders.enabled { store.settings.reminders.enabled = true }
+                await service.refresh(store: store)
+                let allowed = [.authorized, .provisional, .ephemeral].contains(service.authorization)
+                cardSet.remindStatus = allowed ? L("memo.remindOn") : L("coach.cards.remindDenied")
             }
             cardSet.saved = true
             saving = false

@@ -18,8 +18,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                                             didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
         let action = response.actionIdentifier
+        let itemIDs = (response.notification.request.content.userInfo["itemIDs"] as? [String])?.compactMap(UUID.init(uuidString:)) ?? []
         Task { @MainActor in
-            AppRouter.shared.handleNotificationAction(action)
+            if itemIDs.isEmpty {
+                AppRouter.shared.handleNotificationAction(action)
+            } else {
+                AppRouter.shared.openItems(itemIDs)
+            }
         }
         completionHandler()
     }

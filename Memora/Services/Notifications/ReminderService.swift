@@ -72,5 +72,32 @@ final class ReminderService: ObservableObject {
             let request = UNNotificationRequest(identifier: reminder.identifier, content: content, trigger: trigger)
             try? await center.add(request)
         }
+        await scheduleItemReminders(store: store, now: now, locked: locked)
+    }
+
+    /// One notification per spaced due time showing what to recall (the cue, not the answer).
+    private func scheduleItemReminders(store: MemoraStore, now: Date, locked: Set<UUID>) async {
+        let subjects = Dictionary(uniqueKeysWithValues: store.db.subjects.map { ($0.id, $0.name) })
+        let cards = store.db.items
+            .filter { $0.isIntroduced && !$0.isSuspended && !locked.contains($0.id) }
+            .map { ItemReminderPlanner.Card(id: $0.id, due: $0.card.due, cue: $0.prompt, subject: subjects[$0.subjectID] ?? "") }
+        let quiet = store.settings.reminders.quietHoursEnabled
+        let plan = ItemReminderPlanner.plan(now: now, cards: cards,
+                                            quietStart: quiet ? store.settings.reminders.quietStartMinute : nil,
+                                            quietEnd: quiet ? store.settings.reminders.quietEndMinute : nil)
+        for reminder in plan {
+            let content = UNMutableNotificationContent()
+            content.title = L("notif.item.title")
+            let subjectsInGroup = Set(reminder.cards.map(\.subject)).filter { !$0.isEmpty }
+            if subjectsInGroup.count == 1, let name = subjectsInGroup.first { content.subtitle = name }
+            let cues = reminder.cards.map { String($0.cue.prefix(140)) }
+            content.body = (cues.count == 1 ? cues[0] : cues.map { "• " + $0 }.joined(separator: "\n")) + "\n" + L("notif.item.tap")
+            content.sound = .default
+            content.threadIdentifier = "memora.items"
+            content.userInfo = ["route": "items", "itemIDs": reminder.cards.map(\.id.uuidString)]
+            let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: reminder.fireDate)
+            let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+            try? await center.add(UNNotificationRequest(identifier: reminder.identifier, content: content, trigger: trigger))
+        }
     }
 }

@@ -142,3 +142,56 @@ extension AIPrompts {
         """
     }
 }
+
+// MARK: Memorize (the Add screen)
+
+/// What the learner is adding; decides how Gemini shapes the cards.
+enum MemorizeType: String, CaseIterable, Identifiable {
+    case auto, rule, poem, words, facts
+    var id: String { rawValue }
+    var title: String { L("memo.type.\(rawValue)") }
+    var icon: String {
+        switch self {
+        case .auto: return "wand.and.stars"
+        case .rule: return "function"
+        case .poem: return "text.quote"
+        case .words: return "character.book.closed"
+        case .facts: return "list.bullet.rectangle"
+        }
+    }
+    var itemKind: ItemKind {
+        switch self {
+        case .rule: return .concept
+        case .poem: return .process
+        case .words: return .vocabulary
+        case .facts, .auto: return .fact
+        }
+    }
+}
+
+extension AIPrompts {
+    static func memorize(type: MemorizeType, maxCards: Int, language: String) -> String {
+        let lang = languageName(language)
+        return """
+        You are MEMORA's memory assistant. The learner gives you material they want to MEMORIZE long-term with spaced retrieval practice. Turn it into study cards following learning science (retrieval practice, one idea per card, cues that don't give away the answer, concrete examples, elaboration, mnemonics).
+        Requested type: "\(type.rawValue)". If it is "auto", decide from the material which one of rule / poem / words / facts fits best and report it in "type".
+
+        RULE (a rule, formula, law or procedure the learner wrote in their own words, e.g. "مقام المقام يصعد وينضرب"):
+        - Correct and polish it into a clear, precise, complete statement in the learner's language. Keep their catchy wording as the "mnemonic" if it is memorable.
+        - Card 1: "prompt" asks for the rule by its name/situation without revealing it; "answer" = the polished rule; "explanation" = why it works in 1–3 sentences; "example" = one fully worked example.
+        - Then 2–3 application cards: a NEW concrete problem in "prompt", the worked solution in "answer" (these are transfer practice).
+        POEM (verses, a poem, a hadith, a speech or any text to memorize word-for-word):
+        - Keep the text EXACTLY as given (fix only obvious typos). Split it into chunks of one verse (بيت) or 1–2 short lines.
+        - For each chunk: "prompt" = "بعد: «<the previous chunk>» — ماذا يأتي؟" (for the first chunk: "أول <بيت/سطر> من «<title>»"); "answer" = the chunk exactly; "hint" = its first word.
+        - Use the learner's language for the prompt wrapper.
+        WORDS (vocabulary): one card per word/term: "prompt" = the word as written; "answer" = its meaning (from the material, else a short accurate meaning in \(lang)); "example" = a short example sentence; "mnemonic" = a keyword/image mnemonic when helpful.
+        FACTS (notes, a lesson, a PDF): SORT the material into its topics ("section" = topic name) and cover the important facts, definitions, concepts, causes and steps. "prompt" = a clear question that does not reveal the answer; "answer" = concise (1–2 sentences) from the material; add "explanation"/"example" when the material has them.
+
+        Every answer must come from the material (rules may be corrected for accuracy; say so in "note"). No duplicates. At most \(maxCards) cards, in the material's order.
+        "title": a short name for the set. "note": one short sentence for the learner if you corrected or noticed something, else "".
+        Write prompts/answers in the material's language; explanations in \(lang).
+        Output valid JSON only:
+        {"type":"rule|poem|words|facts","title":"","note":"","cards":[{"front":"","back":"","example":"","explanation":"","mnemonic":"","hint":"","section":"","isApplication":false}]}
+        """
+    }
+}
