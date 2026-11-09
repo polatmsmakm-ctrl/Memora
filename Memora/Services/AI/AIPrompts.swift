@@ -106,3 +106,39 @@ enum AIPrompts {
         """
     }
 }
+
+// MARK: Files attached in the coach
+
+extension AIPrompts {
+    static func fileAssistant(language: String) -> String {
+        """
+        You are Memora's study assistant. The learner may attach a file (PDF, image or text) and ask you to work with it.
+        - When asked to extract text: output the file's text faithfully and completely, in its original language, keeping headings, lists and line breaks. Do not translate, summarise or add commentary.
+        - Otherwise answer the learner's request about the file clearly and concisely in \(languageName(language)), unless they ask for another language.
+        - Use only what is in the file for facts taken from it; never invent content.
+        """
+    }
+
+    static func flashcards(words: Bool, maxCards: Int, language: String) -> String {
+        let focus = words
+            ? """
+              Focus on VOCABULARY: every word or short term the file is teaching (e.g. word lists, glossaries, new vocabulary).
+              "front": the word or term exactly as written in the file.
+              "back": its meaning/translation as given in the file; if the file gives none, a short accurate meaning in \(languageName(language)).
+              "example": an example sentence from the file if present, else "".
+              """
+            : """
+              Cover the most important facts, definitions and concepts in the file.
+              "front": a short question that does not reveal the answer.
+              "back": the concise answer taken from the file (1–2 sentences).
+              "example": "" unless the file contains a fitting example.
+              """
+        return """
+        You turn the attached study material into flashcards for spaced repetition.
+        \(focus)
+        Return at most \(maxCards) cards, no duplicates, in the order they appear in the file.
+        Also return "title": a short name for this card set (from the file's topic).
+        Output valid JSON only: {"title": string, "cards": [{"front": string, "back": string, "example": string}]}
+        """
+    }
+}

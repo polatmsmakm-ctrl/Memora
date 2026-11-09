@@ -7,7 +7,7 @@ enum StringsTable {
 
     static let all: [String: Entry] = {
         var table: [String: Entry] = [:]
-        for part in [common, enums, study, learn, home, library, importing, analytics, settings, misc, guidance, importFixes] {
+        for part in [common, enums, study, learn, home, library, importing, analytics, settings, misc, guidance, importFixes, coachFiles] {
             table.merge(part) { first, _ in first }
         }
         return table

@@ -169,3 +169,56 @@ struct AIService {
         return provider.stream(request)
     }
 }
+
+// MARK: Files attached in the coach
+
+struct FlashcardDTO: Codable, Hashable {
+    var front: String
+    var back: String
+    var example: String?
+}
+
+struct FlashcardSetDTO: Codable {
+    var title: String?
+    var cards: [FlashcardDTO]
+}
+
+extension AIService {
+    /// Free-form chat about an attached file (extract text, summarise, questions…).
+    func fileStream(history: [AIMessage], attachment: CoachAttachment) -> AsyncThrowingStream<String, Error> {
+        var messages = Array(history.suffix(12))
+        if let last = messages.indices.last, messages[last].role == .user, let text = attachment.extractedText {
+            messages[last].text = "ATTACHED FILE «\(attachment.fileName)»:\n" + String(text.prefix(60_000)) + "\n\n" + messages[last].text
+        }
+        let request = AIRequest(systemInstruction: AIPrompts.fileAssistant(language: languageCode),
+                                messages: messages,
+                                attachments: attachment.inlineParts,
+                                jsonOutput: false,
+                                temperature: 0.2)
+        return provider.stream(request)
+    }
+
+    /// Flashcards (or vocabulary cards) generated from the attached file.
+    func flashcards(from attachment: CoachAttachment, words: Bool, instruction: String) async throws -> FlashcardSetDTO {
+        var text = "Make the cards. Learner's request: " + instruction
+        if let extracted = attachment.extractedText {
+            text = "ATTACHED FILE «\(attachment.fileName)»:\n" + String(extracted.prefix(60_000)) + "\n\n" + text
+        }
+        let request = AIRequest(systemInstruction: AIPrompts.flashcards(words: words, maxCards: 60, language: languageCode),
+                                messages: [AIMessage(role: .user, text: text)],
+                                attachments: attachment.inlineParts,
+                                jsonOutput: true,
+                                temperature: 0.2)
+        let raw = try await provider.generate(request)
+        var set = try AIResponseValidator.decode(FlashcardSetDTO.self, from: raw)
+        var seen = Set<String>()
+        set.cards = set.cards.compactMap { card in
+            let front = card.front.trimmingCharacters(in: .whitespacesAndNewlines)
+            let back = card.back.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !front.isEmpty, !back.isEmpty, seen.insert(TextNormalizer.normalize(front)).inserted else { return nil }
+            let example = card.example?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return FlashcardDTO(front: front, back: back, example: (example?.isEmpty ?? true) ? nil : example)
+        }
+        return set
+    }
+}
