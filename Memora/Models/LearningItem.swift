@@ -116,6 +116,12 @@ struct LearningItem: Codable, Identifiable, Hashable {
     var isSuspended: Bool
     var card: FSRSCard
     var profile: MemoryProfile
+    /// Fixed reminder schedule (1 h → 1 d → 3 d → 1 w → 1.5 w): reviews completed so far.
+    var memoStep: Int?
+    /// What the learner added (rule / poem / words / facts), for the "mastered" wording.
+    var memoKind: String?
+    /// Set once the last scheduled reminder has been reviewed.
+    var masteredAt: Date?
 
     init(id: UUID = UUID(),
          subjectID: UUID,

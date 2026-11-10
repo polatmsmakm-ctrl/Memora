@@ -34,6 +34,12 @@ enum AppTab: String, CaseIterable, Identifiable {
     }
 }
 
+/// Opens the fixed-schedule review for given items (nil = everything due now).
+struct MemoReviewRequest: Identifiable, Equatable {
+    let id = UUID()
+    var itemIDs: [UUID]?
+}
+
 /// Extra screens from the full app, shown as a sheet from Settings › Advanced tools.
 enum AdvancedScreen: String, Identifiable, CaseIterable {
     case home, learn, reviewModes, coach, analytics
@@ -59,6 +65,8 @@ final class AppRouter: ObservableObject {
         didSet { normalizeTab(previous: oldValue) }
     }
     @Published var advancedScreen: AdvancedScreen?
+    @Published var memoReview: MemoReviewRequest?
+    private var pendingMemoReview: MemoReviewRequest?
     /// Import to open once the advanced sheet has finished closing.
     private var importAfterAdvanced = false
     @Published var activeSession: SessionRequest?
@@ -87,7 +95,10 @@ final class AppRouter: ObservableObject {
 
     /// Called from the advanced sheet's onDismiss.
     func advancedDidClose() {
-        if importAfterAdvanced {
+        if let pending = pendingMemoReview {
+            pendingMemoReview = nil
+            memoReview = pending
+        } else if importAfterAdvanced {
             importAfterAdvanced = false
             showImport = true
         } else {
@@ -127,14 +138,19 @@ final class AppRouter: ObservableObject {
     }
 
     func openReview() {
-        selectedTab = .review
-        start(SessionRequest(mode: .smartReview))
+        openItems(nil)
     }
 
-    /// From a content reminder: recall exactly the cards that were shown.
-    func openItems(_ ids: [UUID]) {
+    /// From a content reminder: review exactly the items that were shown.
+    func openItems(_ ids: [UUID]?) {
         selectedTab = .review
-        start(SessionRequest(mode: .remember, itemIDs: ids))
+        let request = MemoReviewRequest(itemIDs: ids)
+        if advancedScreen != nil {
+            pendingMemoReview = request
+            advancedScreen = nil
+            return
+        }
+        memoReview = request
     }
 
     func openImport(subjectID: UUID? = nil) {

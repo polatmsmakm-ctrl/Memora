@@ -46,32 +46,9 @@ final class ReminderService: ObservableObject {
         guard authorization == .authorized || authorization == .provisional || authorization == .ephemeral else { return }
 
         let now = Date()
-        let scheduler = store.scheduler
         let locked = store.experimentLockedItemIDs
-        let candidates = store.db.items
-            .filter { $0.isIntroduced && !$0.isSuspended && !locked.contains($0.id) }
-            .map { ReminderCandidate(due: $0.card.due,
-                                     isWeak: MemoryStateClassifier.state(of: $0, scheduler: scheduler, now: now) == .weak) }
-        let plan = ReminderPlanner.plan(now: now,
-                                        candidates: candidates,
-                                        reminders: store.settings.reminders,
-                                        sleep: store.settings.sleep,
-                                        secondsPerReview: AnalyticsEngine.averageSecondsPerReview(logs: store.db.reviewLogs),
-                                        calendar: .current,
-                                        texts: .localized)
-        for reminder in plan {
-            let content = UNMutableNotificationContent()
-            content.title = reminder.title
-            content.body = reminder.body
-            content.sound = .default
-            content.categoryIdentifier = Self.categoryIdentifier
-            content.threadIdentifier = "memora"
-            content.userInfo = ["route": "review", "kind": reminder.kind.rawValue]
-            let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: reminder.fireDate)
-            let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
-            let request = UNNotificationRequest(identifier: reminder.identifier, content: content, trigger: trigger)
-            try? await center.add(request)
-        }
+        // Only the per-item reminders on the learner's fixed schedule (1 h, 1 d, 3 d, 1 w,
+        // 1.5 w); the old daily "N cards due" summaries are no longer sent.
         await scheduleItemReminders(store: store, now: now, locked: locked)
     }
 
@@ -79,7 +56,7 @@ final class ReminderService: ObservableObject {
     private func scheduleItemReminders(store: MemoraStore, now: Date, locked: Set<UUID>) async {
         let subjects = Dictionary(uniqueKeysWithValues: store.db.subjects.map { ($0.id, $0.name) })
         let cards = store.db.items
-            .filter { $0.isIntroduced && !$0.isSuspended && !locked.contains($0.id) }
+            .filter { MemoSchedule.isActive($0) && !locked.contains($0.id) }
             .map { ItemReminderPlanner.Card(id: $0.id, due: $0.card.due, cue: $0.prompt, subject: subjects[$0.subjectID] ?? "") }
         let quiet = store.settings.reminders.quietHoursEnabled
         let plan = ItemReminderPlanner.plan(now: now, cards: cards,

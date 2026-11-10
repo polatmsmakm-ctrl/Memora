@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var store: MemoraStore
     @EnvironmentObject private var router: AppRouter
+    @AppStorage(AIService.enabledKey) private var aiEnabled = true
     @ObservedObject private var reminders = ReminderService.shared
     @ObservedObject private var guide = GuideCenter.shared
     @State private var weightsText = ""
@@ -42,14 +43,20 @@ struct SettingsView: View {
     }
 
     private var aiSection: some View {
-        Section(L("settings.ai")) {
+        Section {
+            Toggle(isOn: $aiEnabled) { Label(L("settings.ai.enabled"), systemImage: "sparkles") }
             NavigationLink { AISettingsView() } label: {
                 HStack {
-                    Label(L("settings.ai.configure"), systemImage: "sparkles")
+                    Label(L("settings.ai.configure"), systemImage: "key")
                     Spacer()
-                    Text(AIService.isAvailable ? L("settings.ai.on") : L("settings.ai.off")).foregroundStyle(.secondary)
+                    Text(aiEnabled && AIKeyStore.hasKey ? L("settings.ai.on") : L("settings.ai.off")).foregroundStyle(.secondary)
                 }
             }
+            .disabled(!aiEnabled)
+        } header: {
+            Text(L("settings.ai"))
+        } footer: {
+            Text(L("settings.ai.enabled.footer"))
         }
     }
 

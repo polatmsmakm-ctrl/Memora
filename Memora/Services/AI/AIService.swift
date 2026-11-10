@@ -12,7 +12,10 @@ struct AIService {
         AIService(provider: GeminiProvider(model: settings.aiModel), languageCode: settings.language.rawValue)
     }
 
-    static var isAvailable: Bool { AIKeyStore.hasKey }
+    /// The learner can switch Gemini off entirely (Settings); everything then works on the device.
+    static let enabledKey = "memora.aiEnabled"
+    static var isEnabled: Bool { UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true }
+    static var isAvailable: Bool { isEnabled && AIKeyStore.hasKey }
 
     // MARK: Import
 

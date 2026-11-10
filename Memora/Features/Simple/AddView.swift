@@ -1,13 +1,16 @@
 import SwiftUI
 import PhotosUI
 
-/// The one place to add material: a file, a photo, a scanned page or typed text goes to
-/// Gemini, which returns word cards or question cards to save (with optional reminders).
+/// The one place to add material. With Gemini on, it tidies the text into study cards;
+/// with Gemini off, what the learner writes is saved as it is (files are read on the
+/// device). Either way everything goes on the fixed reminder schedule.
 struct AddView: View {
     @EnvironmentObject private var store: MemoraStore
     @EnvironmentObject private var router: AppRouter
 
+    @AppStorage(AIService.enabledKey) private var aiEnabled = true
     @State private var type: MemorizeType = .auto
+    @State private var title = ""
     @State private var text = ""
     @State private var photoItem: PhotosPickerItem?
     @State private var showScanner = false
@@ -25,7 +28,7 @@ struct AddView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    if !AIService.isAvailable {
+                    if aiEnabled && !AIKeyStore.hasKey && result == nil && !busy {
                         noKeyCard
                     } else if busy {
                         busyCard
@@ -56,24 +59,33 @@ struct AddView: View {
             .fullScreenCover(isPresented: $showScanner) {
                 DocumentScannerView(onFinish: { images in
                     showScanner = false
-                    run(name: L("add.scan.name")) { try CoachAttachment.fromImages(images, name: L("add.scan.name")) }
+                    if useAI {
+                        run(name: L("add.scan.name")) { try CoachAttachment.fromImages(images, name: L("add.scan.name")) }
+                    } else {
+                        readLocally(name: L("add.scan.name")) { try await Self.ocr(images) }
+                    }
                 }, onCancel: { showScanner = false })
                 .ignoresSafeArea()
             }
         }
     }
 
+    private var useAI: Bool { aiEnabled && AIKeyStore.hasKey }
+
+    /// Types offered: "auto" needs Gemini.
+    private var types: [MemorizeType] { useAI ? MemorizeType.allCases : MemorizeType.allCases.filter { $0 != .auto } }
+
     // MARK: Sections
 
     private var inputSection: some View {
         VStack(spacing: 14) {
-            Text(L("add.intro"))
+            Text(useAI ? L("add.intro") : L("add.intro.local"))
                 .font(.callout).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(MemorizeType.allCases) { option in
+                    ForEach(types) { option in
                         Button {
                             type = option
                             Haptics.selection()
@@ -89,15 +101,20 @@ struct AddView: View {
                     }
                 }
             }
-            Text(L("memo.type.\(type.rawValue).hint"))
+            Text(L(useAI ? "memo.type.\(type.rawValue).hint" : "memo.local.\(type.rawValue).hint"))
                 .font(.caption).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             GlassCard {
                 VStack(spacing: 10) {
+                    if !useAI && type != .words {
+                        TextField(L("memo.title.placeholder"), text: $title)
+                            .textFieldStyle(.roundedBorder)
+                    }
                     AnswerEditor(text: $text, placeholder: L("memo.placeholder.\(type.rawValue)"), minHeight: 160)
                     Button { useText() } label: {
-                        Label(L("memo.go"), systemImage: "sparkles").frame(maxWidth: .infinity)
+                        Label(useAI ? L("memo.go") : L("memo.save"), systemImage: useAI ? "sparkles" : "tray.and.arrow.down")
+                            .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(PrimaryButtonStyle(fullWidth: true))
                     .disabled(TextNormalizer.isBlank(text))
@@ -168,12 +185,6 @@ struct AddView: View {
     private var resultSection: some View {
         FlashcardSetCard(cardSet: Binding(get: { result ?? GeneratedCardSet() }, set: { result = $0 }))
         if let result, result.saved {
-            if !result.savedItemIDs.isEmpty {
-                Button {
-                    router.start(SessionRequest(mode: .learn, itemIDs: Array(result.savedItemIDs.prefix(20))))
-                } label: { Label(L("add.startNow"), systemImage: "play.fill") }
-                .buttonStyle(PrimaryButtonStyle(fullWidth: true))
-            }
             Button(L("add.another")) { reset() }
                 .buttonStyle(SecondaryButtonStyle(fullWidth: true, tint: .secondary))
         } else {
@@ -186,7 +197,7 @@ struct AddView: View {
         VStack(spacing: 12) {
             EmptyStateView(systemImage: "sparkles", title: L("add.noKey.title"), message: L("add.noKey.message"),
                            actionTitle: L("add.noKey.action")) { router.selectedTab = .settings }
-            Button(L("add.manual")) { router.openImport() }
+            Button(L("add.manual")) { aiEnabled = false }
                 .buttonStyle(SecondaryButtonStyle(fullWidth: true, tint: .secondary))
         }
     }
@@ -197,6 +208,7 @@ struct AddView: View {
         work?.cancel()
         result = nil
         text = ""
+        title = ""
         errorText = nil
         busy = false
     }
@@ -204,10 +216,14 @@ struct AddView: View {
     private func pickFile() {
         UIApplication.shared.dismissKeyboard()
         let locale = store.settings.language.speechLocaleIdentifier
+        let ai = useAI
         DocumentPicker.present { urls in
             guard let url = urls.first else { return }
-            run(name: url.deletingPathExtension().lastPathComponent) {
-                try await CoachAttachment.load(from: url, speechLocale: locale)
+            let name = url.deletingPathExtension().lastPathComponent
+            if ai {
+                run(name: name) { try await CoachAttachment.load(from: url, speechLocale: locale) }
+            } else {
+                readLocally(name: name) { try await DocumentImporter.extract(from: url, speechLocale: locale).text }
             }
         }
     }
@@ -216,18 +232,63 @@ struct AddView: View {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         UIApplication.shared.dismissKeyboard()
+        if !useAI {
+            result = LocalCards.build(type: type, title: title, text: trimmed)
+            if result?.cards.isEmpty ?? true { result = nil; errorText = L("coach.cards.empty") }
+            return
+        }
         let firstLine = trimmed.components(separatedBy: .newlines).first ?? L("add.text.name")
         let name = String(firstLine.prefix(40))
         run(name: name) { CoachAttachment(fileName: name, systemImage: "text.alignleft", extractedText: trimmed) }
     }
 
     private func loadPhoto(_ item: PhotosPickerItem) {
+        if !useAI {
+            readLocally(name: L("add.photo.name")) {
+                guard let data = try await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else {
+                    throw ImportError.unreadable
+                }
+                return try await Self.ocr([image])
+            }
+            return
+        }
         run(name: L("add.photo.name")) {
             guard let data = try await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else {
                 throw ImportError.unreadable
             }
             return try CoachAttachment.fromImages([image], name: L("add.photo.name"))
         }
+    }
+
+    /// Without Gemini: reads the file/photo on the device and puts its text in the editor
+    /// so the learner can trim it before saving.
+    private func readLocally(name: String, _ read: @escaping () async throws -> String) {
+        work?.cancel()
+        errorText = nil
+        busy = true
+        reading = true
+        startedAt = Date()
+        activeModel = nil
+        receivedCards = 0
+        work = Task {
+            do {
+                let extracted = try await read().trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !Task.isCancelled else { return }
+                if extracted.isEmpty { throw ImportError.empty }
+                text = extracted
+                if title.isEmpty { title = name }
+            } catch is CancellationError {
+            } catch {
+                if !Task.isCancelled { errorText = error.localizedDescription }
+            }
+            busy = false
+        }
+    }
+
+    static func ocr(_ images: [UIImage]) async throws -> String {
+        var parts: [String] = []
+        for image in images { parts.append(try await OCRService.recognizeText(in: image)) }
+        return parts.joined(separator: "\n\n")
     }
 
     /// Prepares the attachment, asks Gemini for cards and shows the result to save.

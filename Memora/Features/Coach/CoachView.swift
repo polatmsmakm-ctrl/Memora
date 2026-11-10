@@ -444,7 +444,7 @@ struct FlashcardSetCard: View {
                         }
                         .pickerStyle(.menu)
                     }
-                    Toggle(L("coach.cards.remind"), isOn: $cardSet.remind).font(.footnote)
+                    Label(L("memo.scheduleNote"), systemImage: "bell").font(.caption).foregroundStyle(.secondary)
                     Button { save() } label: {
                         if saving { ProgressView() } else { Label(L("coach.cards.save"), systemImage: "tray.and.arrow.down") }
                     }
@@ -488,7 +488,6 @@ struct FlashcardSetCard: View {
         let now = Date()
         let type = cardSet.type
         let setTitle = cardSet.title
-        let remind = cardSet.remind
         let items: [LearningItem] = cardSet.cards.enumerated().map { offset, card in
             var item = LearningItem(subjectID: subjectID,
                                     kind: type.itemKind,
@@ -503,26 +502,20 @@ struct FlashcardSetCard: View {
                                     tags: [setTitle, card.section].compactMap { $0 },
                                     origin: .ai,
                                     createdAt: now.addingTimeInterval(Double(offset) * 0.001))
-            if remind {
-                // Start the spacing schedule now: the first recall prompts arrive in small
-                // batches (5 cards every 2 hours) instead of all at once.
-                item.introducedAt = now
-                item.card.due = now.addingTimeInterval(15 * 60 + Double(offset / 5) * 2 * 3600)
-            }
+            // Fixed schedule: back in 1 hour, then 1 day, 3 days, 1 week, 1.5 weeks.
+            MemoSchedule.start(&item, kind: type, now: now)
             return item
         }
         store.addItems(items)
         cardSet.savedItemIDs = items.map(\.id)
         Task {
-            if remind {
-                let service = ReminderService.shared
-                await service.refreshAuthorization()
-                if service.authorization == .notDetermined { await service.requestAuthorization() }
-                if !store.settings.reminders.enabled { store.settings.reminders.enabled = true }
-                await service.refresh(store: store)
-                let allowed = [.authorized, .provisional, .ephemeral].contains(service.authorization)
-                cardSet.remindStatus = allowed ? L("memo.remindOn") : L("coach.cards.remindDenied")
-            }
+            let service = ReminderService.shared
+            await service.refreshAuthorization()
+            if service.authorization == .notDetermined { await service.requestAuthorization() }
+            if !store.settings.reminders.enabled { store.settings.reminders.enabled = true }
+            await service.refresh(store: store)
+            let allowed = [.authorized, .provisional, .ephemeral].contains(service.authorization)
+            cardSet.remindStatus = allowed ? L("memo.remindOn") : L("coach.cards.remindDenied")
             cardSet.saved = true
             saving = false
             Haptics.success()

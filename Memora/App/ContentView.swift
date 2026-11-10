@@ -31,6 +31,14 @@ struct RootView: View {
                 .environment(\.layoutDirection, store.settings.language.layoutDirection)
                 .preferredColorScheme(store.settings.appearance.colorScheme)
         }
+        .fullScreenCover(item: $router.memoReview) { request in
+            MemoReviewView(itemIDs: request.itemIDs)
+                .environmentObject(store)
+                .environmentObject(router)
+                .environment(\.layoutDirection, store.settings.language.layoutDirection)
+                .environment(\.locale, store.settings.language.locale)
+                .preferredColorScheme(store.settings.appearance.colorScheme)
+        }
         .sheet(item: $router.advancedScreen, onDismiss: { router.advancedDidClose() }) { screen in
             AdvancedScreenView(screen: screen)
                 .environmentObject(store)
