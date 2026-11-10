@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import PDFKit
 import UniformTypeIdentifiers
 
 /// A file attached to a coach chat. PDFs and images go to Gemini as-is (it reads scanned
@@ -13,7 +14,7 @@ struct CoachAttachment: Identifiable {
     var extractedText: String?
 
     /// Gemini accepts about 20 MB per request including base64 overhead.
-    static let maxInlineBytes = 14 * 1024 * 1024
+    static let maxInlineBytes = 10 * 1024 * 1024
 
     var title: String { (fileName as NSString).deletingPathExtension }
 
@@ -41,6 +42,11 @@ struct CoachAttachment: Identifiable {
         let isPDF = ext == "pdf" || type?.conforms(to: .pdf) == true || data.prefix(4).elementsEqual([0x25, 0x50, 0x44, 0x46])
 
         if isPDF {
+            // A PDF with a real text layer is sent as text: far smaller and faster for Gemini
+            // than the whole file. Scanned PDFs (no text) go as the file so Gemini reads them.
+            if let text = textLayer(of: local) {
+                return CoachAttachment(fileName: fileName, systemImage: "doc.richtext", extractedText: text)
+            }
             if data.count <= maxInlineBytes {
                 return CoachAttachment(fileName: fileName, systemImage: "doc.richtext",
                                        inlineParts: [AIAttachment(mimeType: "application/pdf", data: Data(data))])
@@ -62,6 +68,22 @@ struct CoachAttachment: Identifiable {
         let doc = try await DocumentImporter.extract(from: url, speechLocale: speechLocale)
         guard !TextNormalizer.isBlank(doc.text) else { throw ImportError.empty }
         return CoachAttachment(fileName: fileName, systemImage: doc.kind.systemImage, extractedText: doc.text)
+    }
+
+    /// The PDF's own text when most pages have one (no OCR), else nil.
+    static func textLayer(of url: URL) -> String? {
+        guard let document = PDFDocument(url: url), !document.isLocked || document.unlock(withPassword: "") else { return nil }
+        let count = min(document.pageCount, PDFTextExtractor.maxPages)
+        guard count > 0 else { return nil }
+        var pages: [String] = []
+        var withText = 0
+        for index in 0..<count {
+            let text = document.page(at: index)?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if text.count >= 80 { withText += 1 }
+            pages.append(text)
+        }
+        guard Double(withText) / Double(count) >= 0.7 else { return nil }
+        return pages.enumerated().map { "[\($0.offset + 1)]\n\($0.element)" }.joined(separator: "\n\n")
     }
 
     static func downscaled(_ image: UIImage, maxSide: CGFloat = 2400) -> UIImage {

@@ -221,18 +221,73 @@ extension AIService {
     }
 
     /// Rules, poems, words or notes turned into study cards (the Add screen).
-    func memorize(_ attachment: CoachAttachment, type: MemorizeType) async throws -> FlashcardSetDTO {
+    /// `progress` gets the number of cards received so far while the answer streams in.
+    func memorize(_ attachment: CoachAttachment, type: MemorizeType, progress: ((Int) -> Void)? = nil) async throws -> FlashcardSetDTO {
         var text = "Material to memorize:"
         if let extracted = attachment.extractedText {
             text = "MATERIAL «\(attachment.fileName)»:\n" + String(extracted.prefix(60_000))
         }
-        let request = AIRequest(systemInstruction: AIPrompts.memorize(type: type, maxCards: 60, language: languageCode),
+        var lastCount = 0
+        let request = AIRequest(systemInstruction: AIPrompts.memorize(type: type, maxCards: 40, language: languageCode),
                                 messages: [AIMessage(role: .user, text: text)],
                                 attachments: attachment.inlineParts,
                                 jsonOutput: true,
-                                temperature: 0.2)
+                                temperature: 0.2,
+                                onPartial: { partial in
+                                    let count = partial.components(separatedBy: "\"front\"").count - 1
+                                    guard count != lastCount else { return }
+                                    lastCount = count
+                                    DispatchQueue.main.async { progress?(count) }
+                                })
         let raw = try await provider.generate(request)
-        return Self.cleaned(try AIResponseValidator.decode(FlashcardSetDTO.self, from: raw))
+        return Self.cleaned(try Self.decodeCardSet(raw))
+    }
+
+    /// Decodes a card set; if the JSON was cut off, keeps every complete card object.
+    static func decodeCardSet(_ raw: String) throws -> FlashcardSetDTO {
+        if let set = try? AIResponseValidator.decode(FlashcardSetDTO.self, from: raw), !set.cards.isEmpty { return set }
+        let cards = salvageObjects(in: raw, afterKey: "\"cards\"").compactMap {
+            try? JSONDecoder().decode(FlashcardDTO.self, from: Data($0.utf8))
+        }
+        guard !cards.isEmpty else { throw AIError.invalidResponse }
+        func field(_ key: String) -> String? {
+            guard let range = raw.range(of: "\"\(key)\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"", options: .regularExpression) else { return nil }
+            let match = String(raw[range])
+            guard let colon = match.firstIndex(of: ":") else { return nil }
+            let value = match[match.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            return try? JSONDecoder().decode(String.self, from: Data(value.utf8))
+        }
+        return FlashcardSetDTO(type: field("type"), title: field("title"), note: field("note"), cards: cards)
+    }
+
+    /// Complete `{...}` objects inside the array that follows `key`, ignoring a cut-off tail.
+    static func salvageObjects(in text: String, afterKey key: String) -> [String] {
+        guard let keyRange = text.range(of: key), let open = text[keyRange.upperBound...].firstIndex(of: "[") else { return [] }
+        var objects: [String] = []
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var start: String.Index?
+        var index = text.index(after: open)
+        while index < text.endIndex {
+            let ch = text[index]
+            if inString {
+                if escaped { escaped = false } else if ch == "\\" { escaped = true } else if ch == "\"" { inString = false }
+            } else if ch == "\"" {
+                inString = true
+            } else if ch == "{" {
+                if depth == 0 { start = index }
+                depth += 1
+            } else if ch == "}" {
+                depth -= 1
+                if depth == 0, let begin = start { objects.append(String(text[begin...index])); start = nil }
+                if depth < 0 { break }
+            } else if ch == "]" && depth == 0 {
+                break
+            }
+            index = text.index(after: index)
+        }
+        return objects
     }
 
     static func cleaned(_ input: FlashcardSetDTO) -> FlashcardSetDTO {

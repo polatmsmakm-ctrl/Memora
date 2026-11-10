@@ -97,7 +97,8 @@ final class AIValidationTests: XCTestCase {
         XCTAssertEqual(GeminiProvider.httpError(429), .rateLimited)
         XCTAssertEqual(GeminiProvider.httpError(404), .modelNotFound)
         XCTAssertEqual(GeminiProvider.httpError(403), .forbidden)
-        XCTAssertEqual(GeminiProvider.httpError(500), .server(500))
+        XCTAssertEqual(GeminiProvider.httpError(500), .overloaded)
+        XCTAssertEqual(GeminiProvider.httpError(418), .server(418))
     }
 
     func testGeminiTextExtraction() throws {

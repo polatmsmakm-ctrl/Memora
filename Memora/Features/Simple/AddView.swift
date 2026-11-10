@@ -15,6 +15,9 @@ struct AddView: View {
     @State private var errorText: String?
     @State private var result: GeneratedCardSet?
     @State private var work: Task<Void, Never>?
+    @State private var startedAt = Date()
+    @State private var receivedCards = 0
+    @State private var reading = false
 
     var body: some View {
         NavigationStack {
@@ -132,7 +135,16 @@ struct AddView: View {
         GlassCard {
             VStack(spacing: 14) {
                 ProgressView().controlSize(.large)
-                Text(L("add.busy")).font(.callout).multilineTextAlignment(.center)
+                Text(reading ? L("add.busy.reading") : L("add.busy")).font(.callout).multilineTextAlignment(.center)
+                TimelineView(.periodic(from: startedAt, by: 1)) { context in
+                    VStack(spacing: 4) {
+                        if receivedCards > 0 {
+                            Text(LF("add.busy.cards", receivedCards)).font(.footnote.weight(.semibold)).foregroundStyle(Theme.accent)
+                        }
+                        Text(LF("add.busy.elapsed", Int(context.date.timeIntervalSince(startedAt))))
+                            .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                }
                 Button(L("common.cancel")) {
                     work?.cancel()
                     busy = false
@@ -215,12 +227,16 @@ struct AddView: View {
         work?.cancel()
         errorText = nil
         busy = true
+        startedAt = Date()
+        receivedCards = 0
+        reading = true
         let wantedType = type
         let service = AIService.make(settings: store.settings)
         work = Task {
             do {
                 let attachment = try await prepare()
-                let set = try await service.memorize(attachment, type: wantedType)
+                reading = false
+                let set = try await service.memorize(attachment, type: wantedType) { count in receivedCards = count }
                 guard !Task.isCancelled else { return }
                 if set.cards.isEmpty {
                     errorText = L("coach.cards.empty")

@@ -190,6 +190,7 @@ extension AIPrompts {
         Every answer must come from the material (rules may be corrected for accuracy; say so in "note"). No duplicates. At most \(maxCards) cards, in the material's order.
         "title": a short name for the set. "note": one short sentence for the learner if you corrected or noticed something, else "".
         Write prompts/answers in the material's language; explanations in \(lang).
+        Keep it compact: leave out any optional field (example, explanation, mnemonic, hint, section, isApplication) that would be empty.
         Output valid JSON only:
         {"type":"rule|poem|words|facts","title":"","note":"","cards":[{"front":"","back":"","example":"","explanation":"","mnemonic":"","hint":"","section":"","isApplication":false}]}
         """

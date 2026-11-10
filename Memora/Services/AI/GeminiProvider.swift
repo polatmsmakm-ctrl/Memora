@@ -5,6 +5,8 @@ import Foundation
 final class GeminiProvider: AIProvider {
     static let baseURL = URL(string: "https://generativelanguage.googleapis.com/v1beta")!
     static let defaultModel = "gemini-flash-latest"
+    /// Used once when the chosen model is overloaded or unavailable.
+    static let fallbackModel = "gemini-flash-lite-latest"
 
     let providerName = "Google Gemini"
     let model: String
@@ -17,16 +19,22 @@ final class GeminiProvider: AIProvider {
         self.apiKeyProvider = apiKeyProvider
         let configuration = URLSessionConfiguration.default
         // Generating a whole set of learning units can take well over a minute.
-        configuration.timeoutIntervalForRequest = 150
-        configuration.timeoutIntervalForResource = 300
+        // Requests stream, so this is the longest silence allowed between chunks.
+        configuration.timeoutIntervalForRequest = 90
+        configuration.timeoutIntervalForResource = 480
         configuration.waitsForConnectivity = false
         self.session = URLSession(configuration: configuration)
     }
 
     // MARK: Requests
 
-    private func makeRequest(_ request: AIRequest, stream: Bool) throws -> URLRequest {
+    /// Thinking makes flash models much slower and isn't needed for card generation;
+    /// switched off after a 400 in case a model rejects the setting.
+    private var limitThinking = true
+
+    private func makeRequest(_ request: AIRequest, stream: Bool, model: String? = nil) throws -> URLRequest {
         guard let key = apiKeyProvider(), !key.isEmpty else { throw AIError.noKey }
+        let model = model ?? self.model
         let path = stream ? "models/\(model):streamGenerateContent" : "models/\(model):generateContent"
         var components = URLComponents(url: Self.baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)
         if stream { components?.queryItems = [URLQueryItem(name: "alt", value: "sse")] }
@@ -35,11 +43,11 @@ final class GeminiProvider: AIProvider {
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body(for: request))
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body(for: request, model: model))
         return urlRequest
     }
 
-    private func body(for request: AIRequest) -> [String: Any] {
+    private func body(for request: AIRequest, model: String) -> [String: Any] {
         var contents: [[String: Any]] = []
         for (index, message) in request.messages.enumerated() {
             var parts: [[String: Any]] = [["text": message.text]]
@@ -50,8 +58,11 @@ final class GeminiProvider: AIProvider {
             }
             contents.append(["role": message.role.rawValue, "parts": parts])
         }
-        var generationConfig: [String: Any] = ["temperature": request.temperature]
+        var generationConfig: [String: Any] = ["temperature": request.temperature, "maxOutputTokens": 32_768]
         if request.jsonOutput { generationConfig["responseMimeType"] = "application/json" }
+        if limitThinking && !model.lowercased().contains("pro") {
+            generationConfig["thinkingConfig"] = ["thinkingBudget": 0]
+        }
         var body: [String: Any] = ["contents": contents, "generationConfig": generationConfig]
         if !request.systemInstruction.isEmpty {
             body["systemInstruction"] = ["parts": [["text": request.systemInstruction]]]
@@ -61,17 +72,60 @@ final class GeminiProvider: AIProvider {
 
     // MARK: AIProvider
 
+    /// Streams under the hood so long answers never sit silent until the timeout, then
+    /// returns the whole text. Retries once on busy/rate-limit errors, then tries the
+    /// lighter fallback model.
     func generate(_ request: AIRequest) async throws -> String {
-        let urlRequest = try makeRequest(request, stream: false)
+        var lastError: Error = AIError.invalidResponse
+        let attempts: [(model: String, delay: UInt64)] = [(model, 0), (model, 2_000_000_000), (Self.fallbackModel, 1_000_000_000)]
+        for (index, attempt) in attempts.enumerated() {
+            if index > 0 && attempt.model == Self.fallbackModel && model == Self.fallbackModel { break }
+            if attempt.delay > 0 { try await Task.sleep(nanoseconds: attempt.delay) }
+            do {
+                return try await collect(request, model: attempt.model)
+            } catch let error as AIError {
+                lastError = error
+                switch error {
+                case .rateLimited, .overloaded, .timeout, .server: continue
+                case .modelNotFound where attempt.model != Self.fallbackModel: continue
+                case .message where limitThinking:
+                    // A model may reject the thinking setting: retry without it.
+                    limitThinking = false
+                    continue
+                default: throw error
+                }
+            }
+        }
+        throw lastError
+    }
+
+    private func collect(_ request: AIRequest, model: String) async throws -> String {
+        var text = ""
+        var finish: String?
         do {
-            let (data, response) = try await session.data(for: urlRequest)
+            let urlRequest = try makeRequest(request, stream: true, model: model)
+            let (bytes, response) = try await session.bytes(for: urlRequest)
             guard let http = response as? HTTPURLResponse else { throw AIError.invalidResponse }
-            guard http.statusCode == 200 else { throw Self.httpError(http.statusCode) }
-            guard let text = try Self.extractText(from: data), !text.isEmpty else { throw AIError.invalidResponse }
-            return text
+            guard http.statusCode == 200 else {
+                var body = Data()
+                for try await byte in bytes { body.append(byte); if body.count > 8_000 { break } }
+                throw Self.httpError(http.statusCode, body: body)
+            }
+            for try await line in bytes.lines {
+                guard line.hasPrefix("data:") else { continue }
+                let payload = Data(line.dropFirst(5).trimmingCharacters(in: .whitespaces).utf8)
+                if let reason = Self.finishReason(from: payload) { finish = reason }
+                if let chunk = try Self.extractText(from: payload), !chunk.isEmpty {
+                    text += chunk
+                    request.onPartial?(text)
+                }
+            }
         } catch {
             throw Self.map(error)
         }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw finish == "MAX_TOKENS" ? AIError.truncated : AIError.invalidResponse }
+        return trimmed
     }
 
     func stream(_ request: AIRequest) -> AsyncThrowingStream<String, Error> {
@@ -81,7 +135,11 @@ final class GeminiProvider: AIProvider {
                     let urlRequest = try self.makeRequest(request, stream: true)
                     let (bytes, response) = try await self.session.bytes(for: urlRequest)
                     guard let http = response as? HTTPURLResponse else { throw AIError.invalidResponse }
-                    guard http.statusCode == 200 else { throw Self.httpError(http.statusCode) }
+                    guard http.statusCode == 200 else {
+                        var body = Data()
+                        for try await byte in bytes { body.append(byte); if body.count > 8_000 { break } }
+                        throw Self.httpError(http.statusCode, body: body)
+                    }
                     for try await line in bytes.lines {
                         guard line.hasPrefix("data:") else { continue }
                         let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
@@ -161,13 +219,28 @@ final class GeminiProvider: AIProvider {
         return parts.compactMap { $0["text"] as? String }.joined()
     }
 
-    static func httpError(_ status: Int) -> AIError {
+    static func finishReason(from data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let first = (json["candidates"] as? [[String: Any]])?.first else { return nil }
+        return first["finishReason"] as? String
+    }
+
+    /// Maps an HTTP error, keeping Google's own message where it explains the problem.
+    static func httpError(_ status: Int, body: Data = Data()) -> AIError {
+        let message = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])
+            .flatMap { $0["error"] as? [String: Any] }
+            .flatMap { $0["message"] as? String }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowered = message?.lowercased() ?? ""
         switch status {
-        case 400, 401: return .forbidden
-        case 403: return .forbidden
+        case 400 where lowered.contains("api key") || lowered.contains("api_key"): return .forbidden
+        case 401, 403: return .forbidden
         case 404: return .modelNotFound
         case 429: return .rateLimited
-        default: return .server(status)
+        case 500, 503, 504: return .overloaded
+        default:
+            if let message, !message.isEmpty { return .message(String(message.prefix(220))) }
+            return .server(status)
         }
     }
 

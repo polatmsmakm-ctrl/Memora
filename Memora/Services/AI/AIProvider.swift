@@ -21,6 +21,8 @@ struct AIRequest {
     var attachments: [AIAttachment] = []
     var jsonOutput: Bool = false
     var temperature: Double = 0.3
+    /// Called with the text received so far while a long answer streams in.
+    var onPartial: ((String) -> Void)? = nil
 }
 
 struct AIModelInfo: Identifiable, Hashable {
@@ -30,7 +32,8 @@ struct AIModelInfo: Identifiable, Hashable {
 
 enum AIError: LocalizedError, Equatable {
     case noKey, offline, timeout, rateLimited, forbidden, modelNotFound
-    case blocked, invalidResponse, server(Int), ungrounded
+    case blocked, invalidResponse, server(Int), ungrounded, truncated, overloaded
+    case message(String)
 
     var errorDescription: String? {
         switch self {
@@ -44,6 +47,9 @@ enum AIError: LocalizedError, Equatable {
         case .invalidResponse: return L("ai.error.invalid")
         case .server(let code): return LF("ai.error.server", code)
         case .ungrounded: return L("ai.error.ungrounded")
+        case .truncated: return L("ai.error.truncated")
+        case .overloaded: return L("ai.error.overloaded")
+        case .message(let text): return LF("ai.error.google", text)
         }
     }
 }

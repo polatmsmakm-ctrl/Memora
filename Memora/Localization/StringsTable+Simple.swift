@@ -51,6 +51,12 @@ extension StringsTable {
         "add.noKey.action": ("افتح الإعدادات", "Open Settings"),
         "add.manual": ("أو أضف بدون ذكاء اصطناعي", "Or add without AI"),
 
+        "ai.error.truncated": ("الرد انقطع لأن المحتوى طويل. جرّب جزء أصغر من الملف.", "The answer was cut off because the material is long. Try a smaller part."),
+        "ai.error.overloaded": ("خوادم جمناي مزحومة الحين. حاول بعد دقيقة.", "Gemini's servers are busy right now. Try again in a minute."),
+        "ai.error.google": ("جمناي رد بخطأ: %@", "Gemini returned an error: %@"),
+        "add.busy.elapsed": ("مرّت %d ثانية", "%d seconds so far"),
+        "add.busy.cards": ("طلعت %d بطاقة للحين…", "%d cards so far…"),
+        "add.busy.reading": ("يقرأ الملف…", "Reading the file…"),
         "today.title": ("راجع", "Review"),
         "today.due": ("مستحقة للمراجعة الحين", "Due for review now"),
         "today.due.go": ("ابدأ المراجعة", "Start review"),
