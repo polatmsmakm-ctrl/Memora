@@ -154,6 +154,7 @@ struct SubjectProgress: Identifiable {
     var nextDue: Date?
     var isMastered: Bool
 
+    @MainActor
     static func build(store: MemoraStore, now: Date) -> [SubjectProgress] {
         let started = store.db.items.filter { $0.isIntroduced && !$0.isSuspended }
         let bySubject = Dictionary(grouping: started, by: \.subjectID)
