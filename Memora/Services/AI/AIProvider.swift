@@ -23,6 +23,10 @@ struct AIRequest {
     var temperature: Double = 0.3
     /// Called with the text received so far while a long answer streams in.
     var onPartial: ((String) -> Void)? = nil
+    /// Called when a model starts working on the request (shown so the learner sees progress).
+    var onModel: ((String) -> Void)? = nil
+    /// Longest wait for the first words before switching to a faster model.
+    var firstChunkTimeout: TimeInterval = 120
 }
 
 struct AIModelInfo: Identifiable, Hashable {

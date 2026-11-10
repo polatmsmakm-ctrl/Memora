@@ -82,10 +82,9 @@ struct AISettingsView: View {
         Task {
             do {
                 let list = try await GeminiProvider(model: store.settings.aiModel).listModels()
+                // Don't switch the model by itself: the newest listed one is often a slow
+                // preview/thinking model. The default "gemini-flash-latest" stays unless chosen.
                 models = list
-                if let newest = list.first, !list.contains(where: { $0.id == store.settings.aiModel }) {
-                    store.settings.aiModel = newest.id
-                }
                 status = LF("ai.model.loaded", list.count)
             } catch {
                 status = error.localizedDescription

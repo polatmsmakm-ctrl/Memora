@@ -222,13 +222,14 @@ extension AIService {
 
     /// Rules, poems, words or notes turned into study cards (the Add screen).
     /// `progress` gets the number of cards received so far while the answer streams in.
-    func memorize(_ attachment: CoachAttachment, type: MemorizeType, progress: ((Int) -> Void)? = nil) async throws -> FlashcardSetDTO {
+    func memorize(_ attachment: CoachAttachment, type: MemorizeType,
+                  progress: ((Int) -> Void)? = nil, model: ((String) -> Void)? = nil) async throws -> FlashcardSetDTO {
         var text = "Material to memorize:"
         if let extracted = attachment.extractedText {
             text = "MATERIAL «\(attachment.fileName)»:\n" + String(extracted.prefix(60_000))
         }
         var lastCount = 0
-        let request = AIRequest(systemInstruction: AIPrompts.memorize(type: type, maxCards: 40, language: languageCode),
+        var request = AIRequest(systemInstruction: AIPrompts.memorize(type: type, maxCards: 30, language: languageCode),
                                 messages: [AIMessage(role: .user, text: text)],
                                 attachments: attachment.inlineParts,
                                 jsonOutput: true,
@@ -239,6 +240,9 @@ extension AIService {
                                     lastCount = count
                                     DispatchQueue.main.async { progress?(count) }
                                 })
+        request.onModel = { name in DispatchQueue.main.async { model?(name) } }
+        // A model that sends nothing for this long is "thinking" too slowly: switch to the light one.
+        request.firstChunkTimeout = 25
         let raw = try await provider.generate(request)
         return Self.cleaned(try Self.decodeCardSet(raw))
     }

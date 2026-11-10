@@ -56,6 +56,7 @@ extension StringsTable {
         "ai.error.google": ("جمناي رد بخطأ: %@", "Gemini returned an error: %@"),
         "add.busy.elapsed": ("مرّت %d ثانية", "%d seconds so far"),
         "add.busy.cards": ("طلعت %d بطاقة للحين…", "%d cards so far…"),
+        "add.busy.waiting": ("لو ما بدأ خلال ثواني بيتحوّل تلقائي لنموذج أسرع.", "If nothing arrives within seconds it switches to a faster model automatically."),
         "add.busy.reading": ("يقرأ الملف…", "Reading the file…"),
         "today.title": ("راجع", "Review"),
         "today.due": ("مستحقة للمراجعة الحين", "Due for review now"),

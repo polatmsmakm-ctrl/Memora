@@ -18,6 +18,8 @@ struct AddView: View {
     @State private var startedAt = Date()
     @State private var receivedCards = 0
     @State private var reading = false
+    @State private var activeModel: String?
+    @State private var modelStartedAt = Date()
 
     var body: some View {
         NavigationStack {
@@ -143,6 +145,12 @@ struct AddView: View {
                         }
                         Text(LF("add.busy.elapsed", Int(context.date.timeIntervalSince(startedAt))))
                             .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                        if let activeModel {
+                            Text(activeModel).font(.caption2).foregroundStyle(.tertiary)
+                            if receivedCards == 0 && context.date.timeIntervalSince(modelStartedAt) > 12 {
+                                Text(L("add.busy.waiting")).font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                            }
+                        }
                     }
                 }
                 Button(L("common.cancel")) {
@@ -230,13 +238,20 @@ struct AddView: View {
         startedAt = Date()
         receivedCards = 0
         reading = true
+        activeModel = nil
         let wantedType = type
         let service = AIService.make(settings: store.settings)
         work = Task {
             do {
                 let attachment = try await prepare()
                 reading = false
-                let set = try await service.memorize(attachment, type: wantedType) { count in receivedCards = count }
+                let set = try await service.memorize(attachment, type: wantedType,
+                                                     progress: { count in receivedCards = count },
+                                                     model: { name in
+                                                         if activeModel != nil && activeModel != name { receivedCards = 0 }
+                                                         activeModel = name
+                                                         modelStartedAt = Date()
+                                                     })
                 guard !Task.isCancelled else { return }
                 if set.cards.isEmpty {
                     errorText = L("coach.cards.empty")

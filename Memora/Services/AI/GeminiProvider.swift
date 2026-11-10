@@ -73,55 +73,102 @@ final class GeminiProvider: AIProvider {
     // MARK: AIProvider
 
     /// Streams under the hood so long answers never sit silent until the timeout, then
-    /// returns the whole text. Retries once on busy/rate-limit errors, then tries the
-    /// lighter fallback model.
+    /// returns the whole text. A model that sends nothing within `firstChunkTimeout`
+    /// (slow "thinking" models) is abandoned for the light fallback model; busy or
+    /// rate-limited replies are retried once.
     func generate(_ request: AIRequest) async throws -> String {
+        var models = [model]
+        if model != Self.fallbackModel { models.append(Self.fallbackModel) }
         var lastError: Error = AIError.invalidResponse
-        let attempts: [(model: String, delay: UInt64)] = [(model, 0), (model, 2_000_000_000), (Self.fallbackModel, 1_000_000_000)]
-        for (index, attempt) in attempts.enumerated() {
-            if index > 0 && attempt.model == Self.fallbackModel && model == Self.fallbackModel { break }
-            if attempt.delay > 0 { try await Task.sleep(nanoseconds: attempt.delay) }
-            do {
-                return try await collect(request, model: attempt.model)
-            } catch let error as AIError {
-                lastError = error
-                switch error {
-                case .rateLimited, .overloaded, .timeout, .server: continue
-                case .modelNotFound where attempt.model != Self.fallbackModel: continue
-                case .message where limitThinking:
-                    // A model may reject the thinking setting: retry without it.
-                    limitThinking = false
-                    continue
-                default: throw error
+        for (index, current) in models.enumerated() {
+            let firstWait = index == 0 ? request.firstChunkTimeout : max(request.firstChunkTimeout, 60)
+            var retriedBusy = false
+            var retriedThinking = false
+            while true {
+                try Task.checkCancellation()
+                request.onModel?(current)
+                do {
+                    return try await collect(request, model: current, firstChunkTimeout: firstWait)
+                } catch let error as AIError {
+                    lastError = error
+                    switch error {
+                    case .rateLimited, .overloaded, .server:
+                        if retriedBusy { break }
+                        retriedBusy = true
+                        try await Task.sleep(nanoseconds: 2_000_000_000)
+                        continue
+                    case .message where limitThinking && !retriedThinking:
+                        // A model may reject the thinking setting: retry without it.
+                        retriedThinking = true
+                        limitThinking = false
+                        continue
+                    case .timeout, .modelNotFound, .truncated, .invalidResponse:
+                        break
+                    default:
+                        throw error
+                    }
                 }
+                break // try the next model
             }
         }
         throw lastError
     }
 
-    private func collect(_ request: AIRequest, model: String) async throws -> String {
-        var text = ""
-        var finish: String?
+    /// Mutable timestamps shared between the reader and its watchdog.
+    private final class Activity: @unchecked Sendable {
+        private let lock = NSLock()
+        private var last = Date()
+        private var started = false
+        func touch() { lock.lock(); last = Date(); started = true; lock.unlock() }
+        func snapshot() -> (Date, Bool) { lock.lock(); defer { lock.unlock() }; return (last, started) }
+    }
+
+    private func collect(_ request: AIRequest, model: String, firstChunkTimeout: TimeInterval) async throws -> String {
+        let activity = Activity()
+        let idleLimit: TimeInterval = 45
         do {
-            let urlRequest = try makeRequest(request, stream: true, model: model)
-            let (bytes, response) = try await session.bytes(for: urlRequest)
-            guard let http = response as? HTTPURLResponse else { throw AIError.invalidResponse }
-            guard http.statusCode == 200 else {
-                var body = Data()
-                for try await byte in bytes { body.append(byte); if body.count > 8_000 { break } }
-                throw Self.httpError(http.statusCode, body: body)
-            }
-            for try await line in bytes.lines {
-                guard line.hasPrefix("data:") else { continue }
-                let payload = Data(line.dropFirst(5).trimmingCharacters(in: .whitespaces).utf8)
-                if let reason = Self.finishReason(from: payload) { finish = reason }
-                if let chunk = try Self.extractText(from: payload), !chunk.isEmpty {
-                    text += chunk
-                    request.onPartial?(text)
+            return try await withThrowingTaskGroup(of: String.self) { group in
+                group.addTask {
+                    try await self.read(request, model: model, activity: activity)
                 }
+                group.addTask {
+                    // Watchdog: nothing at all for `firstChunkTimeout`, or a stall mid-answer.
+                    while true {
+                        try await Task.sleep(nanoseconds: 1_000_000_000)
+                        let (last, started) = activity.snapshot()
+                        let limit = started ? idleLimit : firstChunkTimeout
+                        if Date().timeIntervalSince(last) > limit { throw AIError.timeout }
+                    }
+                }
+                defer { group.cancelAll() }
+                guard let result = try await group.next() else { throw AIError.invalidResponse }
+                return result
             }
         } catch {
             throw Self.map(error)
+        }
+    }
+
+    private func read(_ request: AIRequest, model: String, activity: Activity) async throws -> String {
+        var text = ""
+        var finish: String?
+        let urlRequest = try makeRequest(request, stream: true, model: model)
+        let (bytes, response) = try await session.bytes(for: urlRequest)
+        guard let http = response as? HTTPURLResponse else { throw AIError.invalidResponse }
+        guard http.statusCode == 200 else {
+            var body = Data()
+            for try await byte in bytes { body.append(byte); if body.count > 8_000 { break } }
+            throw Self.httpError(http.statusCode, body: body)
+        }
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data:") else { continue }
+            let payload = Data(line.dropFirst(5).trimmingCharacters(in: .whitespaces).utf8)
+            if let reason = Self.finishReason(from: payload) { finish = reason }
+            if let chunk = try Self.extractText(from: payload), !chunk.isEmpty {
+                text += chunk
+                activity.touch()
+                request.onPartial?(text)
+            }
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw finish == "MAX_TOKENS" ? AIError.truncated : AIError.invalidResponse }
